@@ -1,0 +1,29 @@
+# 可选的实验写权限。只允许修改固定实验对象，不授予 delete、Secret 或集群管理权限。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubepilot-lab-writer
+  namespace: kube-agent-lab
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["demo-web"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["demo-web"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubepilot-lab-writer
+  namespace: kube-agent-lab
+subjects:
+  - kind: ServiceAccount
+    name: kubepilot
+    namespace: kube-agent-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubepilot-lab-writer

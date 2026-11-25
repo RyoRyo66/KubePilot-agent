@@ -1,0 +1,18 @@
+global:
+  resolve_timeout: 1m
+route:
+  receiver: kubepilot
+  group_by: [alertname, namespace, service]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 5m
+receivers:
+  - name: kubepilot
+    webhook_configs:
+      - url: http://platform-gateway:8080/ingest/alertmanager
+        send_resolved: true
+        max_alerts: 10
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/kubepilot-token/webhook-token

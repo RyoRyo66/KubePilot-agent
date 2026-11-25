@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fault-worker
+  namespace: kube-agent-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fault-worker }
+  template:
+    metadata:
+      labels: { app: fault-worker }
+    spec:
+      containers:
+        - name: worker
+          image: python:3.12-alpine
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import time
+              chunks = []
+              while True:
+                  chunks.append(bytearray(8 * 1024 * 1024))
+                  print('allocated MiB:', len(chunks) * 8, flush=True)
+                  time.sleep(0.2)
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }

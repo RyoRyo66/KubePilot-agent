@@ -1,0 +1,1 @@
+[{"op":"replace","path":"/spec/selector/app","value":"kubepilot-no-matching-pod"}]

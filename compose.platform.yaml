@@ -1,0 +1,21 @@
+services:
+  platform:
+    build:
+      context: .
+      dockerfile: Dockerfile.platform
+      target: platform
+    image: kubepilot-platform:0.2.0
+    restart: unless-stopped
+    ports:
+      - "${PLATFORM_BIND:-127.0.0.1}:18081:18081"
+    environment:
+      PLATFORM_PUBLIC_ORIGIN: ${PLATFORM_PUBLIC_ORIGIN:?Set the browser-facing origin}
+      PLATFORM_ALLOW_HTTP: ${PLATFORM_ALLOW_HTTP:-false}
+      PLATFORM_REGISTRATION_CLOSED: ${PLATFORM_REGISTRATION_CLOSED:-false}
+    volumes:
+      - platform-data:/app/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  platform-data:

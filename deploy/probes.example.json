@@ -1,0 +1,4 @@
+{
+  "Deployment/demo-web": "http://127.0.0.1:18090/",
+  "Service/demo-web": "http://127.0.0.1:18090/"
+}

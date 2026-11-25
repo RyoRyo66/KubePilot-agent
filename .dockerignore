@@ -1,0 +1,12 @@
+.git
+web/node_modules
+web/dist
+bin
+data
+.cache
+.env
+.env.platform
+connector.yaml
+kubepilot-connector.yaml
+.work
+*.log

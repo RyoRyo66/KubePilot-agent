@@ -1,0 +1,11 @@
+groups:
+  - name: kubepilot-demo
+    rules:
+      - alert: KubePilotDemoWebUnavailable
+        expr: probe_success{job="demo-web-http",namespace="kube-agent-lab",service="demo-web"} == 0
+        for: 5s
+        labels:
+          severity: warning
+        annotations:
+          summary: "demo-web HTTP probe failed"
+          description: "Blackbox Exporter cannot reach the demo-web Service. Collect live Kubernetes evidence before deciding whether a repair is safe."

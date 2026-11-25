@@ -1,0 +1,14 @@
+{
+  "serverUrl": "http://127.0.0.1:18081",
+  "token": "REPLACE_WITH_CONNECTOR_TOKEN",
+  "allowHttp": true,
+  "generation": 1,
+  "scope": {
+    "namespace": "script-lab",
+    "targets": [{"kind": "Service", "name": "payment-service", "probeUrl": "http://payment-service.script-lab.svc/health"}],
+    "actions": ["restore_selector"],
+    "automatic": true,
+    "image": "kubepilot-connector:0.2.0"
+  },
+  "webhookToken": "REPLACE_WITH_WEBHOOK_TOKEN"
+}
