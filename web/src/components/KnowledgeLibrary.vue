@@ -4,7 +4,7 @@ import { Plus, Search } from 'lucide-vue-next'
 import type { Passage } from '../types'
 
 interface Document { id:string; title:string; content:string; source?:string }
-const props = defineProps<{ api:(path:string,body?:unknown)=>Promise<any>; readOnly?:boolean }>()
+const props = defineProps<{ api:(path:string,body?:unknown)=>Promise<any> }>()
 const docs = ref<Document[]>([])
 const hits = ref<Passage[]>([])
 const query = ref(''), searched = ref(''), title = ref(''), content = ref('')
@@ -58,7 +58,7 @@ async function remove(doc:Document) {
 <template>
   <section class="kb">
     <div class="p-page-heading"><div><h1>排障知识库</h1><p>按故障现象、事件名称或日志关键词检索参考资料。</p></div>
-      <button v-if="!readOnly" class="p-button primary" :disabled="busy" :aria-expanded="editing" @click="editing=!editing"><Plus :size="15"/>{{ editing?'收起导入':'导入资料' }}</button>
+      <button class="p-button primary" :disabled="busy" :aria-expanded="editing" @click="editing=!editing"><Plus :size="15"/>{{ editing?'收起导入':'导入资料' }}</button>
     </div>
     <p v-if="error" class="kb-error" role="alert">{{error}} <button class="p-button ghost" :disabled="busy" @click="run(list)">刷新资料列表</button></p>
     <p v-if="notice" class="kb-note" role="status">{{notice}}</p>
@@ -87,7 +87,7 @@ async function remove(doc:Document) {
       <details v-for="doc in docs.filter(d=>d.id.startsWith('doc-')===custom)" :key="doc.id">
         <summary>{{doc.title}}</summary><pre>{{doc.content}}</pre>
         <a v-if="doc.source" :href="doc.source" target="_blank" rel="noopener noreferrer">查看 Kubernetes 原文 ↗</a>
-        <template v-if="custom&&!readOnly">
+        <template v-if="custom">
           <button v-if="removal!==doc.id" class="p-button ghost" :disabled="busy" @click="removal=doc.id">移除资料</button>
           <div v-else class="kb-actions"><small>移除后，历史诊断仍保留当时的参考段落。</small><button class="p-button" :disabled="busy" @click="remove(doc)">确认移除</button><button class="p-button ghost" @click="removal=''">取消</button></div>
         </template>

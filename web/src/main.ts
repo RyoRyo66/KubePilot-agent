@@ -7,6 +7,6 @@ fetch('/api/platform/ping').then(async response => {
   const info = response.ok ? await response.json() : null
   if (info?.product === 'kubepilot-platform') {
     const { default: PlatformApp } = await import('./AccountApp.vue')
-    createApp(PlatformApp, { simulation: info.simulation === true }).mount('#app')
+    createApp(PlatformApp).mount('#app')
   } else createApp(App).mount('#app')
 }).catch(() => createApp(App).mount('#app'))

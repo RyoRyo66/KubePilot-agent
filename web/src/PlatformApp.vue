@@ -3,13 +3,12 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { Radio, BrainCircuit, ShieldCheck, ArrowRight, Check, Copy, Download, Plus, X, RefreshCw, Activity, Clock3, CircleCheck, CircleAlert, Loader2, LockKeyhole, ChevronRight, Pause, Terminal, FileCheck2, FlaskConical, PanelLeftClose, PanelLeftOpen, FileStack, ScanLine, BookOpen, Settings2, LogOut } from 'lucide-vue-next'
 import type { PlatformState, Scope, PlatformCase } from './platform'
 import { accountAPI, APIError, type ActiveSession, type Workspace } from './account'
-import SimulationPanel from './SimulationPanel.vue'
 import KnowledgeLibrary from './components/KnowledgeLibrary.vue'
 import KnowledgePassages from './components/KnowledgePassages.vue'
 import BrandMark from './components/BrandMark.vue'
 import SplitPane from './components/SplitPane.vue'
 
-const props = defineProps<{ session: ActiveSession; simulation?: boolean }>()
+const props = defineProps<{ session: ActiveSession }>()
 const emit = defineEmits<{ expired: [message?: string]; workspaceChange: [workspace: Workspace] }>()
 
 const data = ref<PlatformState | null>(null)
@@ -127,7 +126,7 @@ async function enterCases(){await action('complete',async()=>{if(data.value?.rea
 function accountTabKeydown(event:KeyboardEvent){
  const tabs=['connection','workspace','password'] as const;const i=tabs.indexOf(workspaceTab.value)
  const n=event.key==='ArrowRight'?(i+1)%3:event.key==='ArrowLeft'?(i+2)%3:event.key==='Home'?0:event.key==='End'?2:-1
- if(n<0||props.simulation)return;event.preventDefault();workspaceTab.value=tabs[n]!;nextTick(()=>document.querySelector<HTMLElement>('#workspace-tab-'+tabs[n])?.focus())
+ if(n<0)return;event.preventDefault();workspaceTab.value=tabs[n]!;nextTick(()=>document.querySelector<HTMLElement>('#workspace-tab-'+tabs[n])?.focus())
 }
 onMounted(()=>{document.body.classList.add('platform-mode');refresh();timer=setInterval(refresh,3000)})
 onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;clearInterval(timer);clearTimeout(toastTimer)})
@@ -135,11 +134,11 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
 
 <template>
  <div class="p-shell" :class="{'p-collapsed':sidebarCollapsed,'p-banner-hidden':!bannerOpen}">
-  <div v-if="bannerOpen" class="p-announcement"><p><strong>KubePilot</strong><span>Kubernetes 应用故障诊断与修复</span><button :disabled="simulation" @click="page='setup';mobilePane='config'">接入设置</button></p><button class="p-announcement-close" aria-label="关闭顶部提示" @click="bannerOpen=false"><X :size="14"/></button></div>
+  <div v-if="bannerOpen" class="p-announcement"><p><strong>KubePilot</strong><span>Kubernetes 应用故障诊断与修复</span><button @click="page='setup';mobilePane='config'">接入设置</button></p><button class="p-announcement-close" aria-label="关闭顶部提示" @click="bannerOpen=false"><X :size="14"/></button></div>
   <aside class="p-side">
-   <div class="p-brand-row"><a class="p-brand" href="#" aria-label="KubePilot 接入工作台" @click.prevent="page=simulation?'cases':'setup'"><BrandMark/><span>KUBEPILOT</span></a><button class="p-icon p-collapse" :aria-label="sidebarCollapsed?'展开导航':'收起导航'" @click="sidebarCollapsed=!sidebarCollapsed"><PanelLeftOpen v-if="sidebarCollapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button></div>
+   <div class="p-brand-row"><a class="p-brand" href="#" aria-label="KubePilot 接入工作台" @click.prevent="page='setup'"><BrandMark/><span>KUBEPILOT</span></a><button class="p-icon p-collapse" :aria-label="sidebarCollapsed?'展开导航':'收起导航'" @click="sidebarCollapsed=!sidebarCollapsed"><PanelLeftOpen v-if="sidebarCollapsed" :size="16"/><PanelLeftClose v-else :size="16"/></button></div>
    <nav aria-label="主要导航">
-    <button :disabled="simulation" aria-label="接入设置" :title="simulation?'模拟环境使用预置接入配置':'接入设置'" :class="{active:page==='setup'}" @click="page='setup';mobilePane='config'"><FlaskConical :size="17"/><span>接入设置</span><span class="p-count">{{steps.filter(s=>s.done).length}}/3</span></button>
+    <button aria-label="接入设置" title="接入设置" :class="{active:page==='setup'}" @click="page='setup';mobilePane='config'"><FlaskConical :size="17"/><span>接入设置</span><span class="p-count">{{steps.filter(s=>s.done).length}}/3</span></button>
     <button aria-label="故障中心" title="故障中心" :class="{active:page==='cases'}" @click="page='cases'"><Activity :size="17"/><span>故障中心</span><span v-if="openCases" class="p-count">{{openCases}}</span></button>
     <button aria-label="知识库" title="知识库" :class="{active:page==='knowledge'}" @click="page='knowledge'"><BookOpen :size="17"/><span>知识库</span></button>
     <button aria-label="操作记录" title="操作记录" :class="{active:page==='events'}" @click="page='events'"><Clock3 :size="17"/><span>操作记录</span></button>
@@ -230,9 +229,8 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
        </template>
       </SplitPane>
      </template>
-     <KnowledgeLibrary v-else-if="page==='knowledge'" :api="api" :read-only="simulation"/>
+     <KnowledgeLibrary v-else-if="page==='knowledge'" :api="api"/>
      <template v-else-if="page==='cases'">
-      <SimulationPanel v-if="simulation" :account-id="session.account.id" :workspace-id="session.workspace.id" @incident="chosen=$event"/>
       <div class="p-page-heading"><div><h1>故障中心</h1><p>查看故障证据、复核结论、执行状态与验证结果。</p></div><div class="p-heading-actions"><button v-if="data?.config.scope.automatic" class="p-button ghost" :disabled="!!busy" @click="action('pause',async()=>{await api('/pause',{});scope.automatic=false;message('已暂停后续自动修复，已提交操作仍需验证')})"><Pause :size="15"/>暂停自动修复</button><button class="p-button primary" :disabled="!!busy||data?.busy||!data?.online" @click="action('scan',async()=>{await api('/scan',{});message('已开始实时巡检')})"><Loader2 v-if="data?.busy" class="spin" :size="16"/><RefreshCw v-else :size="16"/>{{data?.busy?'任务运行中':'立即巡检'}}</button></div></div>
       <div class="p-metrics"><div><small>待处理事件</small><strong>{{openCases}}</strong></div><div><small>已验证恢复</small><strong>{{cases.filter(c=>c.incident.status==='resolved').length}}</strong></div><div><small>收到告警</small><strong>{{data?.alerts.length || 0}}</strong></div><div><small>执行策略</small><strong class="p-metric-text">{{data?.config.scope.automatic?'受控自动修复':'人工确认执行'}}</strong></div></div>
       <div v-if="data?.lastError" class="p-notice"><CircleAlert :size="18"/><span>{{data.lastError}}</span></div>
@@ -287,7 +285,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
     <div class="p-label-row"><h2 id="workspace-title">工作空间与连接</h2><button class="p-icon" aria-label="关闭工作空间信息" autofocus @click="workspaceDialog?.close()"><X :size="18"/></button></div>
     <p class="p-workspace-caption">{{workspaceName}} · v{{data?.version || '0.2.0'}}</p>
     <div class="p-tabs p-account-tabs" role="tablist" aria-label="账号与空间设置" @keydown="accountTabKeydown">
-     <button v-for="t in [{id:'connection',label:'连接状态'},{id:'workspace',label:'工作空间'},{id:'password',label:'修改密码'}]" :key="t.id" :id="'workspace-tab-'+t.id" :disabled="simulation&&t.id!=='connection'" role="tab" aria-controls="workspace-settings-panel" :tabindex="workspaceTab===t.id?0:-1" :aria-selected="workspaceTab===t.id" :class="{active:workspaceTab===t.id}" @click="workspaceTab=t.id as typeof workspaceTab;accountError='';accountNotice=''">{{t.label}}</button>
+     <button v-for="t in [{id:'connection',label:'连接状态'},{id:'workspace',label:'工作空间'},{id:'password',label:'修改密码'}]" :key="t.id" :id="'workspace-tab-'+t.id" role="tab" aria-controls="workspace-settings-panel" :tabindex="workspaceTab===t.id?0:-1" :aria-selected="workspaceTab===t.id" :class="{active:workspaceTab===t.id}" @click="workspaceTab=t.id as typeof workspaceTab;accountError='';accountNotice=''">{{t.label}}</button>
     </div>
     <div id="workspace-settings-panel" role="tabpanel" :aria-labelledby="'workspace-tab-'+workspaceTab">
      <template v-if="workspaceTab==='connection'">
@@ -304,7 +302,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
         <div><dt>执行策略</dt><dd>{{!data.config.generation?'未配置':data.config.scope.automatic?'受控自动修复':'人工确认执行'}}</dd></div>
        </dl>
       </template>
-      <div class="p-form-actions p-workspace-actions"><button class="p-button" :disabled="!data||simulation" @click="configureWorkspace(1)"><Radio :size="15"/>告警配置</button><button class="p-button" :disabled="!data||simulation" @click="configureWorkspace(2)"><BrainCircuit :size="15"/>模型配置</button><button class="p-button" :disabled="!data||simulation" @click="configureWorkspace(3)"><ShieldCheck :size="15"/>执行端配置</button></div>
+      <div class="p-form-actions p-workspace-actions"><button class="p-button" :disabled="!data" @click="configureWorkspace(1)"><Radio :size="15"/>告警配置</button><button class="p-button" :disabled="!data" @click="configureWorkspace(2)"><BrainCircuit :size="15"/>模型配置</button><button class="p-button" :disabled="!data" @click="configureWorkspace(3)"><ShieldCheck :size="15"/>执行端配置</button></div>
      </template>
      <form v-else-if="workspaceTab==='workspace'" class="p-account-form" @submit.prevent="saveWorkspace">
       <label>工作空间名称<input v-model="workspaceForm.name" maxlength="48" required :disabled="accountBusy"/></label>

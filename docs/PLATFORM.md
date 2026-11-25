@@ -197,18 +197,14 @@ Deployment 出现副本创建失败或超过发布期限时，即使没有产生
 
 管理接口需要有效的账号会话，本机 loopback 也不能绕过登录。所有管理写接口要求同源 JSON 和 `X-Requested-With: KubePilot`；登录/注册正文限制为 16 KiB。Webhook 和 Connector 令牌相互隔离，不能用于账号登录或管理接口。部署清单本身包含 Connector 凭证，下载后按敏感配置保存，不要提交到 Git。
 
-## 复现验证
+## 开发验证
+
+在项目根目录运行 Go 测试和静态检查，然后安装前端依赖并构建页面。
 
 ```sh
 go test ./... -count=1 -timeout 90s
 go vet ./...
-go build -o bin/kubepilot-platform.exe ./cmd/kubepilot-platform
-go build -o bin/kubepilot-connector.exe ./cmd/kubepilot-connector
 cd web
+npm ci
 npm run build
-npm run test:platform
 ```
-
-平台浏览器测试目前在 Windows 上运行，自动启动并清理隔离的 18084 平台、模拟 Connector 和确定性模型协议服务，测试数据保存在忽略提交的 `.work/` 内。测试不会读取用户 kubeconfig，也不会访问真实模型。它检查注册/登录/创建空间/会话/密码修改、空间隔离、三步设置、告警去重、通过/拒绝/人工复核、真实进程间 HTTP 派发、一次写入与模拟恢复、暂停和导出，并保存 1440 / 768 / 390 宽度截图。
-
-验证结果见 `PLATFORM-VALIDATION.md`。协议测试和模拟恢复是实现验证，不能作为论文中真实 Kubernetes 修复率或真实模型诊断准确率的数据。

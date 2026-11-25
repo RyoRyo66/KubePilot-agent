@@ -4,7 +4,6 @@ import { ArrowRight, Check, CircleAlert, Eye, EyeOff, Loader2, LockKeyhole, LogO
 import PlatformApp from './PlatformApp.vue'
 import BrandMark from './components/BrandMark.vue'
 import { accountAPI, APIError, type Session, type ActiveSession, type Workspace } from './account'
-defineProps<{simulation?:boolean}>()
 
 const session = ref<Session>({ authenticated: false, registrationOpen: true })
 const restoring = ref(true), restoreError = ref(''), error = ref(''), notice = ref(''), busy = ref(false)
@@ -40,10 +39,6 @@ async function authenticate() {
   catch (e) { if(version===requestVersion)error.value = e instanceof Error ? e.message : '操作失败，请重试' }
   finally { busy.value = false }
 }
-async function enterDemo(){
-  if(busy.value)return;busy.value=true;error.value=''
-  try{accept(await accountAPI('/demo/enter',{}));announce()}catch(e){error.value=e instanceof Error?e.message:'无法进入模拟环境'}finally{busy.value=false}
-}
 async function createWorkspace() {
   if (busy.value) return
   busy.value = true; error.value = ''; const version = requestVersion
@@ -71,7 +66,7 @@ onUnmounted(() => { requestVersion++; channel?.close() })
 </script>
 
 <template>
-  <PlatformApp v-if="!restoring && !restoreError && active" :key="active.account.id + active.workspace.id" :session="active" :simulation="simulation" @expired="expired" @workspace-change="updateWorkspace"/>
+  <PlatformApp v-if="!restoring && !restoreError && active" :key="active.account.id + active.workspace.id" :session="active" @expired="expired" @workspace-change="updateWorkspace"/>
   <div v-else class="a-shell">
     <header class="a-header"><a href="/" class="a-brand"><BrandMark/><span>KUBEPILOT</span></a><span class="a-header-caption">Kubernetes 故障诊断与修复</span></header>
     <main class="a-main">
@@ -82,14 +77,7 @@ onUnmounted(() => { requestVersion++; channel?.close() })
       </section>
       <section v-else class="a-card" :key="creating ? 'workspace' : mode" :aria-labelledby="creating ? 'workspace-create-title' : 'account-title'">
         <div class="a-card-kicker"><span>{{creating ? '02' : '01'}}</span><span>{{creating ? 'PERSONAL WORKSPACE' : 'ACCOUNT ACCESS'}}</span><span class="a-kicker-line"/></div>
-        <template v-if="simulation && !creating">
-          <div class="a-title-icon"><FolderOpen :size="23" :stroke-width="1.5"/></div>
-          <h1>进入全链路模拟</h1><p class="a-intro">使用预置的模拟集群和模型，演示告警接收、现场采集、自动复核与受控修复。</p>
-          <div class="a-help">此入口是独立的本地演示环境。工作空间与接入配置已准备完成，无需输入账号、API Key 或 kubeconfig。</div>
-          <p v-if="error" class="a-error" role="alert"><CircleAlert :size="16"/>{{error}}</p>
-          <button class="a-primary" :disabled="busy" @click="enterDemo"><Loader2 v-if="busy" class="spin" :size="16"/>{{busy?'正在进入…':'进入演示工作空间'}}<ArrowRight v-if="!busy" :size="16"/></button>
-        </template>
-        <template v-else-if="creating">
+        <template v-if="creating">
           <div class="a-title-icon"><FolderOpen :size="23" :stroke-width="1.5"/></div>
           <h1 id="workspace-create-title">创建个人工作空间</h1>
           <p class="a-intro">工作空间用于保存接入配置、故障事件与执行记录。</p>

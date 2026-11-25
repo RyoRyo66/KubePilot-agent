@@ -68,30 +68,6 @@
 
 本机通过 `go test ./... -count=1 -cover`、`go vet ./...`、前端 TypeScript 检查与 Vite 生产构建。Go 测试包含完整模型工具循环、计划摘要确认、自动策略、模型失败与非法工具、伪造证据、过期计划、分析中的版本变化、并发任务启动、持久化失败、取消、超时、重启、API 鉴权、错误输出和重定向处理。
 
-浏览器集成测试通过本机协议夹具驱动演示环境，可核查只读调查、模型工具调用与恢复验证。测试入口见 web/scripts/agent-e2e.mjs。
-
-复现需分别启动：
-
-```powershell
-# 终端一：协议夹具，仅用于测试。
-node web/scripts/model-fixture.mjs
-
-# 终端二：独立演示服务，避免修改日常演示记录。
-$env:AGENT_MODE = 'demo'
-$env:AGENT_ADDR = '127.0.0.1:18082'
-$env:AGENT_DATA_DIR = '.cache/agent-e2e'
-$env:AGENT_INTERVAL_SECONDS = '3600'
-$env:AGENT_LLM_BASE_URL = 'http://127.0.0.1:18083/v1'
-$env:AGENT_LLM_MODEL = 'fixture-model'
-$env:AGENT_LLM_API_KEY = 'fixture-not-a-real-key'
-.\bin\kubepilot.exe
-
-# 终端三：浏览器验证。
-cd web
-$env:E2E_ALLOW_DEMO_RESET = '1'
-npm run test:agent
-```
-
 ## 尚需实际接入的部分
 
 当前未提供真实模型的地址 / 名称 / 密钥，不能据协议夹具宣称真实模型已经接通或有某种诊断准确率。当前 Docker 引擎未运行，真实 kind 集群和真实资源修复尚未联调。

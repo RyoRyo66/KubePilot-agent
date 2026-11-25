@@ -6,13 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --configLoader native",
     "build": "vue-tsc -b && vite build --configLoader native",
-    "preview": "vite preview --host 127.0.0.1",
-    "test:e2e": "node scripts/e2e.mjs",
-    "test:console": "node scripts/console-e2e.mjs",
-    "test:agent": "node scripts/agent-e2e.mjs",
-    "test:platform": "node scripts/platform-e2e.mjs",
-    "test:accounts": "node scripts/accounts-maintenance-e2e.mjs",
-    "test:simulation": "node scripts/flow-demo-e2e.mjs"
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "lucide-vue-next": "^0.468.0",
@@ -20,7 +14,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
-    "playwright": "^1.65.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vue-tsc": "^3.1.1"
