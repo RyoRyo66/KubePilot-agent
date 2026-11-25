@@ -44,3 +44,36 @@ docker build -f Dockerfile.platform --target connector -t kubepilot-connector:lo
 | `scripts/mock` | 模拟告警发送、Connector 轮询等接口交互 |
 
 Go 开发者可在仓库根目录执行 `go test ./...`。要构建前端，使用 Node.js 24，在 `web` 下执行 `npm ci` 和 `npm run build`。[模拟脚本使用说明](scripts/mock/README.md)
+
+## 演示与测试脚本
+
+`web/scripts/` 下的 10 个 `.mjs` 文件由 Node.js 运行，用于本地演示和开发验证。正式部署的排障流程由 Go 平台和集群内的 Connector 执行。
+
+**想看一次完整排障演示**，先在 Windows 安装 Go 1.24 或更高版本和 Node.js 24，再从仓库根目录执行以下 PowerShell 脚本。
+
+```powershell
+.\scripts\start-flow-demo.ps1
+```
+
+打开 [本地演示工作空间](http://localhost:18082)，依次点击「进入演示工作空间」和「注入故障并发送告警」，即可观察采集、诊断、独立复核、模拟修复和恢复验证。演示使用独立数据目录和模拟模型，结束时运行 `.\scripts\stop-flow-demo.ps1`。[全链路演示说明](docs/SIMULATION.md)
+
+**按用途查找脚本**。下表命令均从 `web/` 目录运行。首次开发测试先执行 `npm ci` 和 `npm run build`；浏览器测试默认使用本机 Chrome。
+
+| 脚本 | 用途 | 运行入口 |
+| --- | --- | --- |
+| [flow-demo.mjs](web/scripts/flow-demo.mjs) | 启动演示平台、模拟模型和演示用 Connector，供人在网页上操作 | `..\scripts\start-flow-demo.ps1` |
+| [flow-demo-e2e.mjs](web/scripts/flow-demo-e2e.mjs) | 在浏览器中连续跑两次模拟排障，核对每次写入次数、恢复结果和报告导出 | `npm run test:simulation` |
+| [platform-e2e.mjs](web/scripts/platform-e2e.mjs) | 在独立平台上测试注册、创建空间、三步接入，以及复核通过、拒绝和人工核查 | `npm run test:platform` |
+| [knowledge-e2e.mjs](web/scripts/knowledge-e2e.mjs) | 启动临时平台，在网页上导入、搜索、移除知识库资料，检查小屏显示 | `node scripts/knowledge-e2e.mjs` |
+| [accounts-maintenance-e2e.mjs](web/scripts/accounts-maintenance-e2e.mjs) | 测试命令行重置密码、旧会话失效，以及重启后工作空间是否保留 | `npm run test:accounts` |
+| [e2e.mjs](web/scripts/e2e.mjs) | 测试早期实验版的页面导航、巡检、故障处置和操作记录 | `npm run test:e2e` |
+| [console-e2e.mjs](web/scripts/console-e2e.mjs) | 测试实验版工作台的 JSON 编辑、请求执行、面板拖动和键盘操作 | `npm run test:console` |
+| [agent-e2e.mjs](web/scripts/agent-e2e.mjs) | 测试实验版 Agent 读取证据、调用工具、等待确认和执行受控修复 | `npm run test:agent` |
+| [model-fixture.mjs](web/scripts/model-fixture.mjs) | 为实验版 Agent 提供固定的模型工具调用响应，便于复现排障过程 | `node scripts/model-fixture.mjs` |
+| [platform-model-fixture.mjs](web/scripts/platform-model-fixture.mjs) | 为 B/S 平台模拟模型连接、诊断和复核响应，平台测试和全链路演示会自行启动它 | `node scripts/platform-model-fixture.mjs`（单独调试时） |
+
+不同测试需要的本地服务如下。
+
+- **全链路测试**需要一个新启动的演示实例（默认 `localhost:18082`），也需要普通 B/S 平台在 `127.0.0.1:18081` 运行，以验证两个工作空间的登录会话相互隔离。手动观看演示只需启动演示实例。
+- **平台、账号和知识库测试**会自行启动临时平台。先构建 `bin/kubepilot-platform.exe`；平台端到端测试还需要 `bin/kubepilot-connector.exe`。平台和账号测试默认分别占用 18084 和 18085 端口。[Windows 构建命令](docs/PLATFORM.md#复现验证)
+- **三个实验版测试**（`test:e2e`、`test:console`、`test:agent`）会重置演示数据。先使用独立数据目录启动 `kubepilot` 的 demo 后端，再在测试终端设置 `$env:E2E_ALLOW_DEMO_RESET = '1'`。Agent 测试还需将该后端连接到 `model-fixture.mjs`。实验版后端和全链路演示默认都用 18082 端口，请分开运行。[实验版 Agent 启动步骤](docs/AGENT.md#验证结果)
