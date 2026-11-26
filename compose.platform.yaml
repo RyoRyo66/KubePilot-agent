@@ -2,20 +2,29 @@ services:
   platform:
     build:
       context: .
-      dockerfile: Dockerfile.platform
       target: platform
-    image: kubepilot-platform:0.2.0
-    restart: unless-stopped
+    image: kubepilot-platform:0.3.1-r1
     ports:
-      - "${PLATFORM_BIND:-127.0.0.1}:18081:18081"
+      - "127.0.0.1:18081:18081"
     environment:
-      PLATFORM_PUBLIC_ORIGIN: ${PLATFORM_PUBLIC_ORIGIN:?Set the browser-facing origin}
+      PLATFORM_HOST: 0.0.0.0
+      PLATFORM_PUBLIC_ORIGIN: ${PLATFORM_PUBLIC_ORIGIN:?请填写浏览器访问地址}
       PLATFORM_ALLOW_HTTP: ${PLATFORM_ALLOW_HTTP:-false}
-      PLATFORM_REGISTRATION_CLOSED: ${PLATFORM_REGISTRATION_CLOSED:-false}
+      PLATFORM_REGISTRATION_CLOSED: ${PLATFORM_REGISTRATION_CLOSED:-true}
+      PLATFORM_TRUSTED_MODEL_URL: ${PLATFORM_TRUSTED_MODEL_URL:-}
+      PLATFORM_TRUSTED_MODEL_IPS: ${PLATFORM_TRUSTED_MODEL_IPS:-}
+      PLATFORM_TRUSTED_PROXIES: ${PLATFORM_TRUSTED_PROXIES:-}
     volumes:
-      - platform-data:/app/data
+      - platform-v3:/app/data
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    stop_grace_period: 90s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "const h=require('http'),u=new URL(process.env.PLATFORM_PUBLIC_ORIGIN);h.get({host:'127.0.0.1',port:18081,path:'/api/platform/ping',headers:{host:u.host}},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 4s
+      retries: 3
 volumes:
-  platform-data:
+  platform-v3:

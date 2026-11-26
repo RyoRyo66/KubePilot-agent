@@ -18,7 +18,18 @@ async function run(work:()=>Promise<void>) {
   try { await work() } catch (err) { error.value=err instanceof Error ? err.message : '资料操作失败' }
   finally { busy.value=false }
 }
-async function list() { docs.value=await props.api('/knowledge') }
+function sourceUrl(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'https:' || url.protocol === 'http:') return url.href
+  } catch { /* Documents can omit their external source. */ }
+  return undefined
+}
+async function list() {
+  const records: Document[] = await props.api('/knowledge')
+  docs.value = records.map(doc => ({ ...doc, source: sourceUrl(doc.source) }))
+}
 onMounted(()=>run(list))
 
 async function search() {

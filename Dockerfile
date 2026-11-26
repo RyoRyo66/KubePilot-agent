@@ -1,24 +1,23 @@
-FROM node:24-alpine AS frontend
-WORKDIR /build/web
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS frontend
+WORKDIR /build
 COPY web/package*.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-fund --no-audit
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.27.3-alpine AS backend
-WORKDIR /build
-COPY go.mod go.sum ./
-RUN go mod download
-COPY cmd/ cmd/
-COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /kubepilot ./cmd/kubepilot
-
-FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && addgroup -g 10001 agent && adduser -D -u 10001 -G agent agent && mkdir -p /app/data && chown -R agent:agent /app
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS base
 WORKDIR /app
-COPY --from=backend /kubepilot /app/kubepilot
-COPY --from=frontend /build/web/dist /app/web/dist
-USER 10001:10001
-ENV AGENT_ADDR=0.0.0.0:18080 AGENT_MODE=demo AGENT_DATA_DIR=/app/data
-EXPOSE 18080
-ENTRYPOINT ["/app/kubepilot"]
+ENV NODE_ENV=production
+COPY package.json ./
+RUN mkdir -p /app/data && chown node:node /app/data
+USER node
+FROM base AS connector
+COPY connector/main.js connector/kube.js connector/
+COPY server/common.js server/network.js server/
+CMD ["node","connector/main.js"]
+FROM base AS platform
+COPY server/ server/
+COPY connector/ connector/
+COPY ops/ ops/
+COPY --from=frontend /build/dist web/dist
+CMD ["node","server/main.js"]

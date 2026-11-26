@@ -57,7 +57,7 @@ const connectionError = ref('')
 const toast = ref('')
 const source = reactive({ publicUrl: location.origin, allowHttp: location.protocol === 'http:' })
 const model = reactive({ baseUrl: 'https://api.deepseek.com', model: '', apiKey: '' })
-const scope = reactive<Scope>({ namespace: 'kube-agent-lab', image: 'kubepilot-connector:0.2.0', targets: [{ kind:'Deployment', name:'', probeUrl:'' }], actions:['restore_image','restore_selector','restore_probe'], automatic: false })
+const scope = reactive<Scope>({ namespace: 'kube-agent-lab', image: 'kubepilot-connector:0.3.1-r1', targets: [{ kind:'Deployment', name:'', probeUrl:'' }], actions:['restore_image','restore_selector','restore_probe'], automatic: false })
 const sourceConfig = ref('')
 const manifest = ref('')
 const chosen = ref('')
@@ -76,6 +76,7 @@ const confirmCase = ref<PlatformCase | null>(null)
 let timer: ReturnType<typeof setInterval> | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 let hydrated = false
+let requestEpoch = 0
 let fetching = false
 let disposed = false
 const actions = [{id:'restore_image',label:'恢复健康镜像'},{id:'restore_selector',label:'恢复服务选择器'},{id:'restore_probe',label:'恢复健康检查'}]
@@ -97,14 +98,15 @@ async function scopedAccountAPI(path:string,body?:unknown){
  try {const result=await accountAPI(path,body,{accountId:props.session.account.id,workspaceId:props.session.workspace.id});if(disposed)throw new Error('页面状态已更新');return result}
  catch(e){if(!disposed&&e instanceof APIError&&(e.status===401||e.code==='session_changed'))emit('expired');throw e}
 }
-async function refresh() {
- if(fetching||disposed)return;fetching=true
- try { const next=await api('/state') as PlatformState;if(disposed)return;data.value=next;connectionError.value=''
+async function refresh(force = false) {
+ if(disposed || (!force && (fetching || busy.value)))return;
+ const epoch=++requestEpoch; fetching=true
+ try { const next=await api('/state') as PlatformState;if(disposed || epoch!==requestEpoch)return;data.value=next;connectionError.value=''
   if(!hydrated){ if(next.config.publicUrl){source.publicUrl=next.config.publicUrl;source.allowHttp=next.config.allowHttp} if(next.config.baseUrl)model.baseUrl=next.config.baseUrl;model.model=next.config.model
    if(next.config.generation>0)Object.assign(scope,JSON.parse(JSON.stringify(next.config.scope)));step.value=!next.config.publicUrl?1:!next.config.modelTested?2:3;hydrated=true }
- }catch(e){if(!disposed)connectionError.value=e instanceof Error?e.message:'无法连接平台'}finally{fetching=false}
+ }catch(e){if(!disposed && epoch===requestEpoch)connectionError.value=e instanceof Error?e.message:'无法连接平台'}finally{if(epoch===requestEpoch)fetching=false}
 }
-async function action(key:string,fn:()=>Promise<void>){if(busy.value)return;busy.value=key;error.value='';try{await fn();await refresh()}catch(e){error.value=e instanceof Error?e.message:'操作失败'}finally{busy.value=''}}
+async function action(key:string,fn:()=>Promise<void>){if(busy.value)return;busy.value=key;++requestEpoch;fetching=false;error.value='';try{await fn();await refresh(true)}catch(e){error.value=e instanceof Error?e.message:'操作失败'}finally{busy.value=''}}
 async function saveSource(){await action('source',async()=>{const result=await api('/setup/source',source);sourceConfig.value=result.config;message('告警接收配置已生成，请加入 Alertmanager')})}
 async function revealSource(){await action('source-config',async()=>{sourceConfig.value=(await api('/setup/source-config',{})).config})}
 async function saveModel(){await action('model',async()=>{await api('/setup/model',model);model.apiKey='';message('工具调用测试通过，模型配置已保存')})}
@@ -146,7 +148,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
    <div class="p-side-bottom"><button class="p-balance" @click="page='cases'"><span>待处理事件</span><strong>{{openCases}}<small> 项</small></strong><span class="p-balance-mode">{{data?.connection.provider==='demo'?'Demo':data?.online?'Connected':'未连接'}}</span></button><button class="p-organization" aria-label="工作空间与连接" title="工作空间与连接" aria-haspopup="dialog" aria-controls="workspace-dialog" :aria-expanded="workspaceOpen" @click="openWorkspace"><span class="p-avatar">{{avatar}}</span><span><strong>{{workspaceName}}</strong><small>个人空间 · {{session.account.username}}</small></span><ChevronRight :size="16"/></button></div>
   </aside>
   <div class="p-body">
-   <header class="p-top"><div class="p-breadcrumb"><FlaskConical v-if="page==='setup'" :size="17"/><Activity v-else-if="page==='cases'" :size="17"/><BookOpen v-else-if="page==='knowledge'" :size="17"/><Clock3 v-else :size="17"/><strong>{{page==='setup'?'接入工作台':page==='cases'?'故障中心':page==='knowledge'?'知识库':'操作记录'}}</strong><small>{{page==='setup'?'Workspace':page==='cases'?'Incidents':page==='knowledge'?'Knowledge':'Activity'}}</small></div><div class="p-top-right"><span class="p-live" :class="{online:data?.online}"><i/>{{data?.online?'Connector 在线':'Connector 未连接'}}</span><button class="p-icon" aria-label="刷新状态" @click="refresh"><RefreshCw :size="16" :class="{spin:busy}"/></button><button class="p-icon" aria-label="查看工作空间信息" title="工作空间与连接" aria-haspopup="dialog" aria-controls="workspace-dialog" :aria-expanded="workspaceOpen" @click="openWorkspace"><Settings2 :size="16"/></button></div></header>
+   <header class="p-top"><div class="p-breadcrumb"><FlaskConical v-if="page==='setup'" :size="17"/><Activity v-else-if="page==='cases'" :size="17"/><BookOpen v-else-if="page==='knowledge'" :size="17"/><Clock3 v-else :size="17"/><strong>{{page==='setup'?'接入工作台':page==='cases'?'故障中心':page==='knowledge'?'知识库':'操作记录'}}</strong><small>{{page==='setup'?'Workspace':page==='cases'?'Incidents':page==='knowledge'?'Knowledge':'Activity'}}</small></div><div class="p-top-right"><span class="p-live" :class="{online:data?.online}"><i/>{{data?.online?'Connector 在线':'Connector 未连接'}}</span><button class="p-icon" aria-label="刷新状态" @click="refresh()"><RefreshCw :size="16" :class="{spin:busy}"/></button><button class="p-icon" aria-label="查看工作空间信息" title="工作空间与连接" aria-haspopup="dialog" aria-controls="workspace-dialog" :aria-expanded="workspaceOpen" @click="openWorkspace"><Settings2 :size="16"/></button></div></header>
    <main class="p-main" :class="{'p-setup-main':page==='setup'}">
      <div v-if="error||connectionError" class="p-error" role="alert"><CircleAlert :size="18"/><span>{{error||connectionError}}</span><button class="p-icon" aria-label="关闭提示" @click="error='';connectionError=''"><X :size="15"/></button></div>
      <div v-if="data?.connection.provider==='demo'" class="p-demo"><FlaskConical :size="17"/><span>当前执行端使用模拟集群，用于协议与界面演示，尚未连接真实 Kubernetes。</span></div>
@@ -215,7 +217,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
        <template #right>
        <aside class="p-guide">
         <div class="p-guide-document">
-         <div class="p-guide-heading"><div class="p-guide-title-row"><h1>接入说明</h1><span>v{{data?.version || '0.2.0'}}</span></div><p>配置告警源、模型服务和集群执行端。</p></div>
+         <div class="p-guide-heading"><div class="p-guide-title-row"><h1>接入说明</h1><span>v{{data?.version || '0.3.1'}}</span></div><p>配置告警源、模型服务和集群执行端。</p></div>
          <div class="p-guide-context"><strong>{{guideCopy.title}}</strong><p>{{guideCopy.description}}</p><span>{{guideCopy.note}}</span></div>
          <div class="p-guide-label">诊断与验证</div>
          <div class="p-capabilities"><article><div><FileStack :size="18"/><h2>诊断证据</h2></div><p>根据告警、资源状态、事件与日志生成诊断结论。</p></article><article><div><ScanLine :size="18"/><h2>恢复验证</h2></div><p>执行后检查资源就绪状态、服务端点和业务响应。</p></article></div>
@@ -283,7 +285,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
   <dialog id="workspace-dialog" ref="workspaceDialog" class="p-confirm p-workspace-dialog" aria-labelledby="workspace-title" @close="workspaceOpen=false" @click.self="workspaceDialog?.close()" @keydown="workspaceKeydown">
    <div>
     <div class="p-label-row"><h2 id="workspace-title">工作空间与连接</h2><button class="p-icon" aria-label="关闭工作空间信息" autofocus @click="workspaceDialog?.close()"><X :size="18"/></button></div>
-    <p class="p-workspace-caption">{{workspaceName}} · v{{data?.version || '0.2.0'}}</p>
+    <p class="p-workspace-caption">{{workspaceName}} · v{{data?.version || '0.3.1'}}</p>
     <div class="p-tabs p-account-tabs" role="tablist" aria-label="账号与空间设置" @keydown="accountTabKeydown">
      <button v-for="t in [{id:'connection',label:'连接状态'},{id:'workspace',label:'工作空间'},{id:'password',label:'修改密码'}]" :key="t.id" :id="'workspace-tab-'+t.id" role="tab" aria-controls="workspace-settings-panel" :tabindex="workspaceTab===t.id?0:-1" :aria-selected="workspaceTab===t.id" :class="{active:workspaceTab===t.id}" @click="workspaceTab=t.id as typeof workspaceTab;accountError='';accountNotice=''">{{t.label}}</button>
     </div>

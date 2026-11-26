@@ -1,0 +1,11 @@
+**
+!package.json
+!server/
+!server/**
+!connector/
+!connector/**
+!ops/
+!ops/**
+!web/
+!web/dist/
+!web/dist/**

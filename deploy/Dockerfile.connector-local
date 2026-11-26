@@ -1,8 +1,0 @@
-# Build a Linux/amd64 static Connector with the project's Go toolchain first.
-# Context contains only that binary; CA certificates come from the official image.
-FROM nginx:1.28-alpine AS certificates
-FROM scratch
-COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY connector /connector
-USER 10001:10001
-ENTRYPOINT ["/connector"]

@@ -55,6 +55,7 @@ const moreOpen = ref(false)
 const searchOpen = ref(false)
 const searchQuery = ref('')
 const searchIndex = ref(0)
+const confirmedPlan = ref<Incident | null>(null)
 const confirmAction = ref<'execute' | 'reset' | null>(null)
 const toast = ref<{ text: string; error: boolean } | null>(null)
 const runbooks = ref<Runbook[]>([])
@@ -90,6 +91,7 @@ const incidentFilters = computed(() => [
 ])
 const drawerTabs = [{ id: 'evidence', label: '故障证据' }, { id: 'diagnosis', label: '诊断与处置' }, { id: 'timeline', label: '处理时间线' }]
 const executeBlocked = computed(() => {
+  if (selected.value?.plan && (!selected.value.planHash || Date.parse(selected.value.reviewExpires || '') <= Date.now())) return '计划确认已到期，请重新诊断。'
   if (!state.value?.settings.writesEnabled) return '当前为只读模式，暂不能执行处置。'
   if (selected.value?.plan && !state.value?.policies.find(p => p.action === selected.value?.plan?.action)?.enabled) return '对应处置策略已关闭，请先启用策略。'
   if ((selected.value?.executionCount ?? 0) > 0) return '此事件已执行过一次处置，请人工确认后续方案。'
@@ -183,9 +185,11 @@ async function diagnose() {
   }
 }
 async function execute() {
-  const id = selectedID.value; confirmAction.value = null
-  if (!id || executeBlocked.value) return
-  if (await runAction('execute', async () => { await api('/incidents/' + id + '/execute', {}); await api('/inspections', {}) }, '处置流程结束，请查看实际恢复结果')) {
+  const item = confirmedPlan.value
+  confirmAction.value = null
+  if (!item?.planHash || executeBlocked.value) return
+  const id = item.id, planHash = item.planHash
+  if (await runAction('execute', async () => { await api('/incidents/' + id + '/execute', {planHash}); await api('/inspections', {}) }, '处置流程结束，请查看实际恢复结果')) {
     if (selectedID.value === id) drawerTab.value = 'timeline'
   }
 }
@@ -275,14 +279,17 @@ watch([query, filter], () => { recordLimit.value = 50 })
 watch(searchQuery, () => { searchIndex.value = 0 })
 watch(announcementOpen, value => sessionStorage.setItem('kubepilot-announcement', value ? 'visible' : 'hidden'))
 watch(sidebarCollapsed, value => sessionStorage.setItem('kubepilot-sidebar', value ? 'collapsed' : 'expanded'))
+let disposed = false
 onMounted(async () => {
   window.addEventListener('keydown', keydown)
   window.addEventListener('popstate', syncRoute)
   window.addEventListener('hashchange', syncRoute)
-  await refresh(); await loadRunbooks()
+  await refresh(); if (disposed) return
+  await loadRunbooks(); if (disposed) return
   poll = setInterval(() => { if (!busy.value && !needsLogin.value && document.visibilityState === 'visible') void refresh() }, 5000)
 })
 onUnmounted(() => {
+  disposed = true
   clearInterval(poll); clearTimeout(toastTimer)
   window.removeEventListener('keydown', keydown)
   window.removeEventListener('popstate', syncRoute)
@@ -494,7 +501,7 @@ onUnmounted(() => {
         <p v-if="selected.status === 'planned' && executeBlocked" class="execution-blocked"><LockKeyhole :size="15" /><span>{{ executeBlocked }}</span><button v-if="executeBlocked.includes('策略')" class="text-button" @click="setPage('policies')">管理策略<ArrowUpRight :size="14" /></button></p>
         <p v-if="selected.status === 'resolved'" class="recovery-note"><CheckCircle2 :size="16" />已通过恢复验证，完整过程已记录。</p>
         <div class="drawer-actions"><button class="button secondary" :disabled="!!busy || selected.status === 'resolved'" @click="verify"><Loader2 v-if="busy === 'verify'" class="spin" :size="17" /><ShieldCheck v-else :size="17" />验证恢复</button>
-          <button v-if="selected.status === 'planned' && selected.plan" class="button primary" :disabled="!!busy || !!executeBlocked" @click="confirmAction = 'execute'"><Loader2 v-if="busy === 'execute'" class="spin" :size="16" /><Play v-else :size="15" />{{ busy === 'execute' ? '正在处置…' : demo ? '执行演示修复' : '确认并执行' }}</button>
+          <button v-if="selected.status === 'planned' && selected.plan" class="button primary" :disabled="!!busy || !!executeBlocked" @click="confirmedPlan = selected; confirmAction = 'execute'"><Loader2 v-if="busy === 'execute'" class="spin" :size="16" /><Play v-else :size="15" />{{ busy === 'execute' ? '正在处置…' : demo ? '执行演示修复' : '确认并执行' }}</button>
           <button v-else class="button primary" :disabled="!!busy || selected.status === 'resolved'" @click="diagnose"><Loader2 v-if="busy === 'diagnose'" class="spin" :size="17" /><Activity v-else :size="17" />{{ busy === 'diagnose' ? '正在诊断…' : selected.diagnosis ? '重新诊断' : '诊断故障' }}</button>
         </div>
       </footer>
@@ -528,7 +535,7 @@ onUnmounted(() => {
     <div class="modal-heading"><span class="feature-icon"><component :is="confirmAction === 'execute' ? ShieldCheck : RefreshCw" :size="25" /></span><button class="icon-button" aria-label="关闭确认" @click="confirmAction = null"><X :size="21" /></button></div>
     <h2 id="confirm-title">{{ confirmAction === 'execute' ? '确认执行处置计划' : '复位演示资源' }}</h2>
     <p class="modal-description">{{ confirmAction === 'execute' ? (demo ? '仅修改演示环境。提交变更后，系统会自动验证模拟恢复结果。' : '系统将重新校验策略与对象版本，提交限定字段的变更，并验证业务恢复。') : '清除模拟故障并保留历史记录。复位不会被统计为自动修复成功。' }}</p>
-    <div v-if="confirmAction === 'execute' && selected?.plan" class="diff"><div><span>目标：{{ selected.target.name }}</span><pre>- {{ selected.plan.before }}</pre></div><div><span>恢复为健康基线</span><pre>+ {{ selected.plan.after }}</pre></div></div>
+    <div v-if="confirmAction === 'execute' && confirmedPlan?.plan" class="diff"><div><span>目标：{{ confirmedPlan.target.name }}</span><pre>- {{ confirmedPlan.plan.before }}</pre></div><div><span>恢复为健康基线</span><pre>+ {{ confirmedPlan.plan.after }}</pre></div></div>
     <div class="modal-actions"><button class="button secondary" data-autofocus @click="confirmAction = null">取消</button><button class="button primary" :disabled="!!busy || (confirmAction === 'execute' && !!executeBlocked)" @click="confirmAction === 'execute' ? execute() : reset()">{{ confirmAction === 'execute' ? '确认执行' : '确认复位' }}<ArrowRight :size="16" /></button></div>
   </ModalLayer>
 

@@ -20,11 +20,24 @@ function accept(value: Session) {
   session.value = value; clearPasswords()
   if (value.authenticated && !value.workspace) { workspace.name = `${value.account!.username}的工作空间`; workspace.description = '' }
 }
-async function restore() {
-  const version = ++requestVersion; restoring.value = true; restoreError.value = ''
-  try { const next = await accountAPI('/auth/session'); if (version === requestVersion) accept(next) }
-  catch { if (version === requestVersion) restoreError.value = '无法连接平台，请检查服务状态后重试。' }
-  finally { if (version === requestVersion) restoring.value = false }
+let refreshSequence = 0
+async function restore(background = false) {
+  const sequence = ++refreshSequence, version = requestVersion
+  const foreground = !background || restoring.value
+  if (foreground) { restoring.value = true; restoreError.value = '' }
+  try {
+    const next: Session = await accountAPI('/auth/session')
+    if (sequence !== refreshSequence || version !== requestVersion) return
+    const sameIdentity = session.value.authenticated === next.authenticated &&
+      session.value.account?.id === next.account?.id && session.value.workspace?.id === next.workspace?.id
+    restoreError.value = ''
+    if (background && sameIdentity) session.value = next
+    else { ++requestVersion; accept(next) }
+  } catch {
+    if (sequence === refreshSequence && version === requestVersion) restoreError.value = '无法同步登录状态，请检查连接后重试。'
+  } finally {
+    if (sequence === refreshSequence) restoring.value = false
+  }
 }
 async function switchMode(next: 'login'|'register') {
   mode.value = next; error.value = ''; notice.value = ''; help.value = false; clearPasswords()
@@ -34,19 +47,20 @@ async function authenticate() {
   if (busy.value) return
   error.value = ''; notice.value = ''
   if (mode.value === 'register' && credentials.password !== credentials.confirmation) { error.value = '两次输入的密码不一致'; return }
-  busy.value = true; const version = requestVersion
-  try { const value=await accountAPI('/auth/' + mode.value, mode.value === 'register' ? credentials : { username: credentials.username, password: credentials.password }); if(version===requestVersion){accept(value);announce()} }
+  busy.value = true; const version = ++requestVersion
+  try { const value=await accountAPI('/auth/' + mode.value, mode.value === 'register' ? credentials : { username: credentials.username, password: credentials.password }); if(version===requestVersion){++requestVersion;accept(value);announce()} }
   catch (e) { if(version===requestVersion)error.value = e instanceof Error ? e.message : '操作失败，请重试' }
   finally { busy.value = false }
 }
 async function createWorkspace() {
   if (busy.value) return
-  busy.value = true; error.value = ''; const version = requestVersion
-  try { const result = await accountAPI('/workspace/create', workspace,{accountId:session.value.account!.id}); if(version===requestVersion){session.value = { ...session.value, workspace: result.workspace }; announce()} }
+  busy.value = true; error.value = ''; const version = ++requestVersion
+  try { const result = await accountAPI('/workspace/create', workspace,{accountId:session.value.account!.id}); if(version===requestVersion){++requestVersion; session.value = { ...session.value, workspace: result.workspace }; announce()} }
   catch (e) { if(version===requestVersion){if (e instanceof APIError && (e.status === 401||e.code==='session_changed')) expired('登录已失效，请重新登录'); else error.value = e instanceof Error ? e.message : '创建失败，请重试'} }
   finally { busy.value = false }
 }
 function expired(message = '登录已失效，请重新登录') {
+  restoreError.value = ''; restoring.value = false
   requestVersion++; session.value = { authenticated: false, registrationOpen: session.value.registrationOpen }
   mode.value = 'login'; clearPasswords(); workspace.name = ''; workspace.description = ''; error.value = ''; notice.value = message; announce()
 }
@@ -59,21 +73,22 @@ async function signOut() {
 function updateWorkspace(value: Workspace) { session.value = { ...session.value, workspace: value } }
 onMounted(() => {
   sessionStorage.removeItem('kubepilot-platform-token')
-  if ('BroadcastChannel' in window) { channel = new BroadcastChannel('kubepilot-account'); channel.onmessage = () => { void restore() } }
+  if ('BroadcastChannel' in window) { channel = new BroadcastChannel('kubepilot-account'); channel.onmessage = event => { if (event.data === 'session-changed') void restore(true) } }
   void restore()
 })
 onUnmounted(() => { requestVersion++; channel?.close() })
 </script>
 
 <template>
-  <PlatformApp v-if="!restoring && !restoreError && active" :key="active.account.id + active.workspace.id" :session="active" @expired="expired" @workspace-change="updateWorkspace"/>
+  <div v-if="active && restoreError" class="session-warning" role="status">{{ restoreError }} <button type="button" @click="restore(true)">重试</button></div>
+  <PlatformApp v-if="active" :key="active.account.id + ':' + active.workspace.id" :session="active" @expired="expired" @workspace-change="updateWorkspace"/>
   <div v-else class="a-shell">
     <header class="a-header"><a href="/" class="a-brand"><BrandMark/><span>KUBEPILOT</span></a><span class="a-header-caption">Kubernetes 故障诊断与修复</span></header>
     <main class="a-main">
       <section v-if="restoring || restoreError" class="a-card a-loading" aria-live="polite">
         <Loader2 v-if="restoring" class="spin" :size="24"/><CircleAlert v-else :size="24"/>
         <h1>{{restoring ? '正在连接平台' : '连接失败'}}</h1><p>{{restoreError || '正在恢复登录状态。'}}</p>
-        <button v-if="restoreError" class="a-primary" @click="restore">重新连接</button>
+        <button v-if="restoreError" class="a-primary" @click="restore()">重新连接</button>
       </section>
       <section v-else class="a-card" :key="creating ? 'workspace' : mode" :aria-labelledby="creating ? 'workspace-create-title' : 'account-title'">
         <div class="a-card-kicker"><span>{{creating ? '02' : '01'}}</span><span>{{creating ? 'PERSONAL WORKSPACE' : 'ACCOUNT ACCESS'}}</span><span class="a-kicker-line"/></div>
@@ -117,3 +132,8 @@ onUnmounted(() => { requestVersion++; channel?.close() })
 </template>
 
 <style scoped src="./account.css"></style>
+
+<style scoped>
+.session-warning { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 20; padding: 8px 12px; border: 1px solid #68615a; background: #302d29; color: #faf5ee; border-radius: 6px; font-size: 14px }
+.session-warning button { color: inherit; cursor: pointer; text-decoration: underline; background: transparent; border: 0 }
+</style>

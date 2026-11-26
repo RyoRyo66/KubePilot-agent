@@ -6,7 +6,7 @@ export interface Incident {
   id: string; key: string; type: string; title: string; severity: string; status: string;
   target: Target; firstSeen: string; lastSeen: string; resolvedAt?: string; occurrences: number;
   evidence: Evidence[]; diagnosis?: { knowledge?: Passage[]; engine: string; conclusion: string; evidenceIds: string[]; recommendations: string[]; limitations: string; at: string; disposition?: 'consider_plan' | 'need_evidence' };
-  plan?: Plan; timeline: { at: string; status: string; title: string; detail: string }[]; executionCount: number;
+  planHash?: string; reviewExpires?: string; plan?: Plan; timeline: { at: string; status: string; title: string; detail: string }[]; executionCount: number;
 }
 export interface Inspection { id: string; trigger: string; startedAt: string; durationMs: number; findings: number; status: string; error?: string }
 export interface Policy { action: string; name: string; description: string; enabled: boolean; automatic: boolean; risk: string }
