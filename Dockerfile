@@ -13,7 +13,7 @@ RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 FROM base AS connector
 COPY connector/main.js connector/kube.js connector/
-COPY server/common.js server/network.js server/
+COPY server/common.js server/network.js server/evidence.js server/
 CMD ["node","connector/main.js"]
 FROM base AS platform
 COPY server/ server/

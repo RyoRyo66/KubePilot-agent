@@ -57,6 +57,7 @@ export class Store {
     this.db.exec(`
       PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=4000;
       CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, password TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS login_failures(user TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, failures INTEGER NOT NULL, last_failure INTEGER NOT NULL, retry_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY, user TEXT REFERENCES users(id), expires INTEGER);
       CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY, owner TEXT UNIQUE REFERENCES users(id), info TEXT NOT NULL, config BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS credentials(hash TEXT PRIMARY KEY, space TEXT REFERENCES spaces(id), kind TEXT, UNIQUE(space,kind));

@@ -123,12 +123,14 @@ async function fixture(t) {
         probeUrl: 'http://payment-service.kube-agent-lab.svc/',
       },
     ],
-    image: 'kubepilot-connector:0.3.0',
+    image: 'kubepilot-connector:0.3.0@sha256:' + 'a'.repeat(64),
     automatic: true,
     actions: ['restore_selector'],
   };
   const manifest = JSON.parse((await good('/api/platform/setup/connector', scope)).manifest);
   const cfg = JSON.parse(manifest.items.find((x) => x.kind === 'Secret').stringData['config.json']);
+  assert.equal((await call('/api/platform/setup/connector', { ...scope, image: 'demo:latest' })).status, 400);
+  assert.deepEqual(JSON.parse((await good('/api/platform/setup/manifest', {})).manifest), manifest);
   const demo = new Demo(
     scope.namespace,
     () => structuredClone(world),
@@ -171,6 +173,12 @@ async function fixture(t) {
 }
 test('接入、告警去重、补采、RAG、独立复核、一次受控修复、业务验证', async (t) => {
   const f = await fixture(t);
+  const inspect = f.demo.inspect.bind(f.demo);
+  const privateText = 'example-local-log-marker';
+  f.demo.inspect = async (target, check) => [
+    ...await inspect(target, check),
+    { id: 'ev-log-' + check, source: 'Container Log', summary: 'local', detail: privateText + ' connection refused' },
+  ];
   await f.good('/api/platform/knowledge', {
     title: 'ServiceSelector 实验',
     content: 'ServiceSelector 发生后核对选择器和就绪端点',
@@ -200,6 +208,11 @@ test('接入、告警去重、补采、RAG、独立复核、一次受控修复�
     409,
   );
   assert.ok(!JSON.stringify(state).includes('test-only-secret'));
+  assert.ok(!JSON.stringify(state).includes(privateText));
+  for (const { input } of f.model.calls.filter(c => c.name === 'assess' || c.name === 'review')) {
+    assert.ok(input.evidence.some(e => e.detail === 'ConnectionRefused'));
+    assert.ok(!JSON.stringify(input).includes(privateText));
+  }
 });
 test('模型切换端点不得复用旧凭据，跨空间写入和错误证据受阻', async (t) => {
   const f = await fixture(t);
@@ -333,11 +346,13 @@ test('模型限次退避后接受含单个工具的 stop，校验证据仅限实
   );
   const evidence = Array.from({ length: 33 }, (_, i) => ({
     id: 'ev-' + i,
-    source: 'sample',
-    detail: 'x'.repeat(3000),
+    source: 'Container Log',
+    summary: 'legacy-user-text',
+    detail: 'x'.repeat(3000) + ' connection refused',
   }));
   await assert.rejects(model.call('assess', { evidence }), /证据/);
   const sent = JSON.parse(requests.at(-1).messages[1].content).evidence;
   assert.equal(sent.length, 32);
-  assert.equal(sent[0].detail.length, 2000);
+  assert.equal(sent[0].detail, 'ConnectionRefused');
+  assert.ok(!JSON.stringify(sent).includes('legacy-user-text'));
 });

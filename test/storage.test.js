@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, renameSync, symlinkSync, linkSync, unlinkSync, existsSync } from 'node:fs';
 import { importV2 } from '../ops/import-v2.js';
 import { Store } from '../server/database.js';
 import { passwordHash, matches } from '../server/auth.js';
@@ -45,6 +45,24 @@ test('旧版 AES-GCM 备份可保留账号、工作空间、加密配置与自�
   });
   seal(folder, 'knowledge.enc', [{ id: 'doc-one', title: '旧资料', content: '文档' }]);
   assert.equal(importV2(source, dest).workspaces, 1);
+  // A valid backup with a linked directory or shared file must leave no partial import.
+  const rejected = join(dir, 'refused');
+  for (const path of [join(source, 'identity'), join(source, 'workspaces'), folder]) {
+    const moved = join(dir, 'detached');
+    renameSync(path, moved);
+    symlinkSync(moved, path, 'junction');
+    assert.throws(() => importV2(source, rejected), /备份目录/);
+    assert.equal(existsSync(rejected), false);
+    unlinkSync(path);
+    renameSync(moved, path);
+  }
+  for (const file of ['platform.enc', 'knowledge.enc', 'master.key']) {
+    const alias = join(dir, 'duplicate-file');
+    linkSync(join(folder, file), alias);
+    assert.throws(() => importV2(source, rejected), /普通文件/);
+    assert.equal(existsSync(rejected), false);
+    unlinkSync(alias);
+  }
   const db = new Store(dest);
   try {
     assert.equal(db.workspace(account).name, '旧空间');

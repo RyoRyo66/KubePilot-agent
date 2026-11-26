@@ -21,7 +21,7 @@ const t = {
 const cfg = {
   namespace: 'sample',
   targets: [{ kind: 'Deployment', name: 'api', probeUrl: 'http://api.sample.svc/' }],
-  image: 'test:3',
+  image: 'test:3@sha256:' + 'a'.repeat(64),
   automatic: true,
   actions: ['restore_image', 'restore_probe'],
 };

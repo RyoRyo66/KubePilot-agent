@@ -76,6 +76,13 @@ export function probeServiceName(url, namespace) {
     return null;
   return service;
 }
+export function connectorImage(image) {
+  // OCI repository with optional registry port and tag, followed by the immutable manifest digest.
+  ensure(typeof image === 'string' && image.length <= 255 &&
+    /^[a-z0-9]+(?:[._-]+[a-z0-9]+)*(?::[0-9]+(?=\/))?(?:\/[a-z0-9]+(?:[._-]+[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}$/.test(image) &&
+    !/\s/.test(image), 'Connector 镜像必须使用仓库地址和固定摘要 repo@sha256:<64 位小写十六进制>');
+  return image;
+}
 export function scopeOf(s) {
   const dns = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/;
   const ns = string(s.namespace, 1, 63, '命名空间');

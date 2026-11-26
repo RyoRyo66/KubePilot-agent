@@ -11,6 +11,7 @@ import { manifest, webhook } from './manifest.js';
 import {
   body,
   checkWeb,
+  connectorImage,
   ensure,
   headers,
   json,
@@ -85,6 +86,7 @@ function createPlatform(db, options) {
           ensure(db.machine(token, kind) === ws, '授权已改变', 401);
           const cfg = db.config(ws);
           if (kind === 'webhook') return json(res, 200, agent.ingest(ws, b));
+          connectorImage(cfg.scope.image);
           if (p === '/connector/heartbeat') {
             agent.bus.touch(ws, cfg, b);
             return json(res, 200, { ok: true });
@@ -233,6 +235,7 @@ function createPlatform(db, options) {
           case '/api/platform/setup/connector':
             idle();
             ensure(cfg.publicUrl, '请先配置接收地址');
+            connectorImage(b.image);
             cfg.scope = scopeOf(b);
             cfg.generation++;
             db.tx(() => {

@@ -57,7 +57,7 @@ const connectionError = ref('')
 const toast = ref('')
 const source = reactive({ publicUrl: location.origin, allowHttp: location.protocol === 'http:' })
 const model = reactive({ baseUrl: 'https://api.deepseek.com', model: '', apiKey: '' })
-const scope = reactive<Scope>({ namespace: 'kube-agent-lab', image: 'kubepilot-connector:0.3.1-r1', targets: [{ kind:'Deployment', name:'', probeUrl:'' }], actions:['restore_image','restore_selector','restore_probe'], automatic: false })
+const scope = reactive<Scope>({ namespace: 'kube-agent-lab', image: '', targets: [{ kind:'Deployment', name:'', probeUrl:'' }], actions:['restore_image','restore_selector','restore_probe'], automatic: false })
 const sourceConfig = ref('')
 const manifest = ref('')
 const chosen = ref('')
@@ -188,8 +188,8 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
         <template v-else>
          <div class="p-section-title"><span class="p-feature-icon"><ShieldCheck :size="22"/></span><div><h2>Connector 部署与授权</h2><p>设置执行端、资源范围和允许的修复动作。</p></div></div>
          <form @submit.prevent="saveConnector">
-          <div class="p-two-fields"><label>授权命名空间<input v-model="scope.namespace" required placeholder="kube-agent-lab"/></label><label>Connector 镜像<input v-model="scope.image" required placeholder="管理员提供的可拉取镜像"/></label></div>
-          <p class="p-field-note">镜像由平台管理员构建并发布。下方对象必须已存在于这个命名空间。</p>
+          <div class="p-two-fields"><label>授权命名空间<input v-model="scope.namespace" required placeholder="kube-agent-lab"/></label><label>Connector 镜像<input v-model="scope.image" required placeholder="registry.example.com/team/connector@sha256:…"/></label></div>
+          <p class="p-field-note">填写管理员发布的镜像地址和完整 SHA-256 摘要。下方对象必须已存在于这个命名空间。</p>
           <div class="p-label-row"><strong>授权资源与业务检查</strong><button class="p-text-button" type="button" @click="scope.targets.push({kind:'Service',name:'',probeUrl:''})" :disabled="scope.targets.length>=20"><Plus :size="14"/>添加资源</button></div>
           <div v-for="(target,index) in scope.targets" :key="index" class="p-target">
            <div class="p-target-row">

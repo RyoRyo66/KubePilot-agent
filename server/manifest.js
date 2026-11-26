@@ -1,4 +1,4 @@
-import { probeServiceName } from './common.js';
+import { connectorImage, probeServiceName } from './common.js';
 
 export function webhook(c) {
   return [
@@ -14,6 +14,7 @@ export function webhook(c) {
   ].join('\n');
 }
 export function manifest(c) {
+  connectorImage(c.scope.image);
   const probe = (path) => ({
     exec: {
       command: [

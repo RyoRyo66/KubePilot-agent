@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
+import { connectorImage } from '../server/common.js';
 import { monitoring } from './monitoring.js';
 
 const cluster = 'kubepilot-v3-accept',
@@ -41,7 +42,7 @@ const modelURL = 'http://model-fixture.' + ns + '.svc:18083/v1',
   source = 'http://platform.' + ns + '.svc:18081';
 const scope = {
   namespace: ns,
-  image: process.env.ACCEPT_CONNECTOR_IMAGE || img,
+  image: connectorImage(process.env.ACCEPT_CONNECTOR_IMAGE || img),
   targets: [{ kind: 'Service', name: 'demo-web', probeUrl: 'http://demo-web.' + ns + '.svc/' }],
   actions: ['restore_selector'],
   automatic: true,

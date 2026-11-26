@@ -1,4 +1,5 @@
 import { actions, digest, ensure, hashPlan, id, inScope, now, Problem, stable } from './common.js';
+import { publicEvidence } from './evidence.js';
 import { Model } from './model.js';
 import { search } from './knowledge.js';
 import { Dispatch } from './dispatch.js';
@@ -175,6 +176,7 @@ export class Pipeline {
       ask = (action, args = {}) => this.bus.call(ws, cfg, action, args, signal);
     const { snapshot } = await ask('collect');
     ensure(snapshot && Array.isArray(snapshot.findings), '缺少实时快照');
+    for (const f of snapshot.findings) f.evidence = f.evidence.map(publicEvidence);
     const seen = new Set();
     this.db.tx(() => {
       this.db.put(ws, 'system', 'snapshot', snapshot);
@@ -250,7 +252,8 @@ export class Pipeline {
       for (const check of next) {
         const r = await this.bus.call(ws, cfg, 'inspect', { target: i.target, check }, signal);
         ensure(Array.isArray(r.evidence), '补充采集无效');
-        for (const e of r.evidence) if (!i.evidence.some((v) => v.id === e.id)) i.evidence.push(e);
+        for (const e of r.evidence.map(publicEvidence))
+          if (!i.evidence.some((v) => v.id === e.id)) i.evidence.push(e);
         checked.add(check);
       }
     }
@@ -401,7 +404,7 @@ export class Pipeline {
           return;
         }
         c.incident.target = f.target;
-        c.incident.evidence = f.evidence;
+        c.incident.evidence = f.evidence.map(publicEvidence);
         delete c.incident.plan;
         delete c.review;
         delete c.reviewExpires;

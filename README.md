@@ -1,6 +1,6 @@
 # KubePilot 0.3
 
-KubePilot 接收 Alertmanager 通知，通过部署在业务命名空间里的 Connector 采集证据，由 OpenAI 兼容模型诊断、补采和独立复核。现场核查、写入授权、资源版本检查和恢复验证由程序执行。平台采用 Node.js 24 与 SQLite，前端沿用 0.2 发布版的 Vue 应用。
+KubePilot 接收 Alertmanager 通知，通过部署在业务命名空间里的 Connector 采集证据，由 OpenAI 兼容模型诊断、补采和独立复核。容器日志与 Kubernetes 事件在 Connector 内提取固定诊断信号；平台在入库和模型调用前再次筛选证据。完整日志留在集群内，未知文本显示为“无已识别信号”。现场核查、写入授权、资源版本检查和恢复验证由程序执行。平台采用 Node.js 24 与 SQLite，前端沿用 0.2 发布版的 Vue 应用。
 
 ## 在本机启动平台
 
@@ -18,13 +18,14 @@ npm.cmd start
 
 1. 在「接入告警」填写集群可以访问的平台 origin，生成接收配置，合并到现有 Alertmanager 的 receivers 和路由。跨网络部署使用 HTTPS。收到 resolved 通知仅更新告警，业务恢复需要 Connector 回读。
 2. 在「连接模型」填写 API 基地址、模型名和密钥。平台使用真实工具调用测试连接。只有相同基地址可以沿用已存密钥。管理员可通过 `PLATFORM_TRUSTED_MODEL_URL` 明确指定一个自托管模型基地址。使用私网域名时还需将服务的精确 IP 填入 `PLATFORM_TRUSTED_MODEL_IPS`（多个地址用英文逗号分隔）。
-3. 在「连接执行端」填写命名空间、实际存在的资源、健康检查地址、允许的动作和新版 Connector 镜像。原前端可能预填 0.2 镜像，请改为本次构建的 0.3 镜像。按页面生成的清单部署。需要可用的默认 StorageClass 或已绑定的同名 PVC。Connector 主动向平台轮询，平台无需保存集群 kubeconfig。
+3. 在「连接执行端」填写命名空间、实际存在的资源、健康检查地址、允许的动作和新版 Connector 镜像。填写受信仓库中本次发布的完整镜像名及不可变摘要（形如 `registry.example.com/team/kubepilot-connector@sha256:…`）。已有工作空间若使用旧标签，请重新登记并应用新清单，恢复心跳。按页面生成的清单部署。需要可用的默认 StorageClass 或已绑定的同名 PVC。Connector 主动向平台轮询，平台无需保存集群 kubeconfig。
 
 以有仓库权限的终端构建、推送镜像。请将示例地址替换为节点能拉取的仓库，私库拉取凭证由集群管理员配置。
 
 ```sh
 docker build --target connector -t registry.example.com/team/kubepilot-connector:0.3.1-r1 .
 docker push registry.example.com/team/kubepilot-connector:0.3.1-r1
+# 从 push 输出复制完整 digest，与仓库名拼成 repo@sha256:…，填入平台并下载新清单。
 kubectl --context YOUR_TEST_CONTEXT apply -f downloaded-connector.json
 ```
 
@@ -42,7 +43,7 @@ Connector 从可信健康基线生成恢复计划。第二次独立模型调用�
 
 `data/platform-v3` 下保存 `kubepilot.db`、WAL 相关文件和 `storage.key`。工作空间配置、事件内容和自建知识文档使用 AES-256-GCM 加密。账号密码使用独立盐的 PBKDF2 摘要。备份应在服务停止后复制完整目录并限制读取权限。
 
-0.2 升级使用停机备份的副本，在离线机器导入到全新目录。原卷作为回滚数据。示例命令中的路径需替换。
+0.2 升级使用操作员独占、导入期间只读的普通文件备份（目录和文件均不接受链接）。使用停机备份的副本，在离线机器导入到全新目录。原卷作为回滚数据。示例命令中的路径需替换。
 
 ```sh
 node ops/import-v2.js /backup/kubepilot-v2 /srv/kubepilot/platform-v3
@@ -62,12 +63,13 @@ npm --prefix web ci
 npm --prefix web run build
 docker build -f Dockerfile.local -t kubepilot-v3:accept .
 kind load docker-image kubepilot-v3:accept --name kubepilot-v3-accept
+# 设置 ACCEPT_CONNECTOR_IMAGE 为上述已发布、验收节点可拉取的完整 repo@sha256:… 后执行。
 node ops/accept-kind.js /private/accept.kubeconfig /private/kubepilot-accept
 ```
 
 验收时节点需能获取 `node:24-bookworm-slim`、`prom/prometheus:v3.13.5`、`prom/alertmanager:v0.35.0` 和 `prom/blackbox-exporter:v0.29.1`。可事先拉取并用 `kind load docker-image` 加载。多架构镜像出现层缺失时，先用 `docker image save --platform linux/amd64 -o accept-images.tar` 加上所需镜像名导出节点架构，再用 `kind load image-archive accept-images.tar --name kubepilot-v3-accept` 加载。
 
-设置 `ACCEPT_IMAGE` 和 `ACCEPT_CONNECTOR_IMAGE` 可分别验收正式的平台和 Connector 镜像。设置 `ACCEPT_REVIEW_GATE=true` 会再运行一次相同故障，核对暂停自动修复后写入次数为零，再由测试程序提交已复核计划的确认，最终保持自动修复暂停。
+`ACCEPT_IMAGE` 可覆盖平台镜像；Connector 必须提供完整镜像摘要，可单独通过 `ACCEPT_CONNECTOR_IMAGE` 指定。设置 `ACCEPT_REVIEW_GATE=true` 会再运行一次相同故障，核对暂停自动修复后写入次数为零，再由测试程序提交已复核计划的确认，最终保持自动修复暂停。
 
 验收端口默认为 18183，可通过 `ACCEPT_PORT` 设置。端口转发与浏览器地址需一致。验收专用用户名和随机密码只写在私有输出目录的 `acceptance-account.json`，不要提交该文件。查看保留的页面可运行以下命令。
 

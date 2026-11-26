@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import https from 'node:https';
 import { readFileSync } from 'node:fs';
 import { actions, ensure, hashPlan, inScope, now, probeServiceName, Problem } from '../server/common.js';
+import { diagnosticSignals, publicEvidence, statusCounters } from '../server/evidence.js';
 import { request } from '../server/network.js';
 const tokenDir = '/var/run/secrets/kubernetes.io/serviceaccount/';
 const enc = encodeURIComponent;
@@ -70,19 +71,13 @@ const owner = (object, uid) =>
 const readyPod = (p) =>
   p.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True') &&
   !p.metadata.deletionTimestamp;
-const evidence = (source, summary, detail) => ({
+const evidence = (source, summary, detail) => publicEvidence({
   id: hashPlan([source, summary, String(detail)]).slice(0, 16),
   source,
   summary,
-  detail: String(detail).slice(0, 5000),
+  detail,
   at: now(),
 });
-function safeLog(v) {
-  return v
-    .replace(/(Bearer\s+)[\w+/=._-]+/gi, '$1[已隐藏]')
-    .replace(/((?:password|api[_-]?key|token|secret)\s*["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, '$1[已隐藏]')
-    .replace(/-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g, '[已隐藏]');
-}
 const problemByAction = Object.fromEntries(Object.entries(actions).map(([a, f]) => [f, a]));
 export class Kubernetes {
   constructor(cfg, api = apiClient(), probe, extraOrigins = []) {
@@ -257,7 +252,7 @@ export class Kubernetes {
         const value = await this.api(path + '&previous=' + previous, { signal, text: true });
         if (value)
           return [
-            evidence('Container Log', p.metadata.name + ' / ' + name, safeLog(value).slice(-4096)),
+            evidence('Container Log', p.metadata.name + ' / ' + name, diagnosticSignals(value)),
           ];
       } catch (e) {
         signal?.throwIfAborted();
@@ -271,7 +266,7 @@ export class Kubernetes {
     if (check === 'logs') return this.logs(v, t.container, signal);
     if (check === 'events')
       return (await this.events(v, signal)).map((e) =>
-        evidence('Kubernetes Event', e.reason, safeLog(e.message || '')),
+        evidence('Kubernetes Event', e.reason, diagnosticSignals(e.message)),
       );
     if (check === 'endpoints')
       return [evidence('Business Probe', '业务检查', String(await this.probe(this.spec(t), signal)))];
@@ -280,7 +275,7 @@ export class Kubernetes {
       evidence(
         'Resource Status',
         t.name,
-        JSON.stringify(v.object.status || { readyEndpoints: v.endpoints.length }),
+        JSON.stringify(t.kind === 'Service' ? { readyEndpoints: v.endpoints.length } : statusCounters(v.object.status)),
       ),
     ];
   }
@@ -320,7 +315,7 @@ export class Kubernetes {
         evidence('Resource Status', result.type, result.detail),
         ...warnings
           .slice(0, 5)
-          .map((e) => evidence('Kubernetes Event', e.reason, safeLog(e.message || ''))),
+          .map((e) => evidence('Kubernetes Event', e.reason, diagnosticSignals(e.message))),
       ];
       if (result.container && !['ImagePullBackOff', 'Pending'].includes(result.type))
         try {
@@ -368,13 +363,13 @@ export class Kubernetes {
               ' ' +
               (reason || exit) +
               ' ' +
-              safeLog(c.state?.waiting?.message || ''),
+              diagnosticSignals(c.state?.waiting?.message),
           };
       }
       const blocked = p.status?.conditions?.find(
         (c) => c.type === 'PodScheduled' && c.status === 'False',
       );
-      if (blocked) return { type: 'Pending', detail: blocked.message || blocked.reason };
+      if (blocked) return { type: 'Pending', detail: diagnosticSignals(blocked.message || blocked.reason) };
     }
     const event = events.find(
       (e) =>
@@ -388,7 +383,7 @@ export class Kubernetes {
         container: /spec\.(?:containers|initContainers)\{([^}]+)\}/.exec(
           event.involvedObject.fieldPath || '',
         )?.[1],
-        detail: safeLog(event.message),
+        detail: diagnosticSignals(event.message),
       };
     return {
       type: events.some((e) => e.reason === 'FailedCreate') ? 'FailedCreate' : 'WorkloadUnavailable',

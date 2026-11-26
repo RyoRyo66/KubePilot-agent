@@ -76,6 +76,16 @@ export class Accounts {
       hash: randomBytes(32).toString('base64'),
     };
   }
+  recordFailedLogin(user) {
+    const time = Date.now();
+    this.store.tx(() => {
+      const last = this.db.prepare('SELECT * FROM login_failures WHERE user=?').get(user);
+      const failures = last && time - last.last_failure < 900000 ? Math.min(last.failures + 1, 11) : 1;
+      const delay = failures < 5 ? 0 : Math.min(60000, 1000 * 2 ** (failures - 5));
+      this.db.prepare('INSERT OR REPLACE INTO login_failures VALUES (?,?,?,?)')
+        .run(user, failures, time, time + delay);
+    });
+  }
   token(req) {
     return (
       (req.headers.cookie || '')
@@ -147,10 +157,15 @@ export class Accounts {
         row = { id: id(), name, password: JSON.stringify(pw) };
         this.db.prepare('INSERT INTO users VALUES (?,?,?)').run(row.id, name, row.password);
       } else {
+        if (action === 'login' && row) {
+          const budget = this.db.prepare('SELECT retry_at FROM login_failures WHERE user=?').get(row.id);
+          ensure(!budget || budget.retry_at <= Date.now(), '账号或密码错误', 401);
+        }
         const ok = await matches(
           action === 'login' ? b.password : b.currentPassword,
           row ? JSON.parse(row.password) : this.dummy,
         );
+        if (action === 'login' && row && !ok) this.recordFailedLogin(row.id);
         ensure(ok && row, '账号或密码错误', 401);
         ensure(
           this.db.prepare('SELECT password FROM users WHERE id=?').get(row.id)?.password ===
@@ -169,6 +184,7 @@ export class Accounts {
               '凭证已改变',
               409,
             );
+            this.db.prepare('DELETE FROM login_failures WHERE user=?').run(row.id);
             this.db.prepare('DELETE FROM sessions WHERE user=?').run(row.id);
           });
           this.setCookie(res, '');
@@ -177,6 +193,7 @@ export class Accounts {
       }
       const raw = id();
       this.store.tx(() => {
+        this.db.prepare('DELETE FROM login_failures WHERE user=?').run(row.id);
         this.db.prepare('DELETE FROM sessions WHERE expires<=?').run(Date.now());
         this.db
           .prepare('INSERT INTO sessions VALUES (?,?,?)')

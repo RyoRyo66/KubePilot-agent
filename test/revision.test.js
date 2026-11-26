@@ -4,6 +4,9 @@ import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Accounts } from '../server/auth.js';
+import { connectorImage } from '../server/common.js';
+import { publicEvidence } from '../server/evidence.js';
 import { Dispatch } from '../server/dispatch.js';
 import { Pipeline } from '../server/pipeline.js';
 import { Store } from '../server/database.js';
@@ -26,7 +29,7 @@ const scope = {
   namespace: 'sample',
   automatic: true,
   actions: ['restore_selector'],
-  image: 'fixture:local',
+  image: 'fixture:local@sha256:' + 'a'.repeat(64),
   targets: [{ kind: 'Service', name: 'orders', probeUrl: 'http://orders.sample.svc/' }],
 };
 const cfg = { generation: 1, scope };
@@ -245,4 +248,66 @@ test('Connector 在读取分块响应时执行字节上限', async (t) => {
     ),
     /平台响应过大/,
   );
+});
+
+test('Connector 登记与历史清单只接受不可变镜像', () => {
+  const digest = 'a'.repeat(64);
+  const image = 'registry.example.com:5000/team/connector:v1@sha256:' + digest;
+  for (const ref of ['connector', 'connector:v1', 'connector@sha256:' + digest.toUpperCase(),
+    'connector@sha256:' + digest.slice(1), image + '\n', 'other@' + image]) {
+    assert.throws(() => connectorImage(ref), /固定摘要/);
+    assert.throws(() => manifest({ scope: { ...scope, image: ref } }), /固定摘要/);
+  }
+  assert.equal(connectorImage(image), image);
+  const deployment = JSON.parse(manifest({ scope: { ...scope, image } })).items.find(x => x.kind === 'Deployment');
+  assert.equal(deployment.spec.template.spec.containers[0].image, image);
+});
+
+test('登录失败按账号累计，冷却跨连接和重启，成功登录清零', async t => {
+  const dir = tempDir();
+  let store = new Store(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  let accounts = new Accounts(store, false, false);
+  const pw = 'example-fixture-password';
+  const request = (op, name, password, peer) =>
+    accounts.handle(op, { username: name, password, confirmation: password }, peer,
+      { headers: {} }, { setHeader() {} });
+  const { account } = await request('register', 'TestUser', pw, 'loop1');
+  await request('register', 'Neighbor', pw, 'loop1');
+  // Preload the first four failures without spending the test on password derivations.
+  for (let i = 0; i < 4; i++) accounts.recordFailedLogin(account.id);
+  await assert.rejects(request('login', 'TESTUSER', 'incorrect', 'loop2'), /账号或密码错误/);
+  const state = () => store.db.prepare('SELECT * FROM login_failures WHERE user=?').get(account.id);
+  const before = state();
+  assert.equal(before.failures, 5);
+  assert.ok(before.retry_at > before.last_failure);
+  store.close();
+  store = new Store(dir);
+  accounts = new Accounts(store, false, false);
+  // Pin the test clock inside the persisted window even on slow CI.
+  t.mock.method(Date, 'now', () => before.last_failure + 1);
+  await assert.rejects(request('login', 'testuser', pw, 'loop3'), /账号或密码错误/);
+  assert.deepEqual(state(), before);
+  assert.equal((await request('login', 'neighbor', pw, 'loop3')).authenticated, true);
+  Date.now.mock.mockImplementation(() => before.retry_at + 1);
+  assert.equal((await request('login', 'testuser', pw, 'loop3')).authenticated, true);
+  assert.equal(state(), undefined);
+});
+
+test('入库和模型出口反复筛选仅保留诊断信号、计数和证据引用', () => {
+  const marker = 'fixture-private-content';
+  const examples = [
+    ['Container Log', 'connection refused; ' + marker, 'ConnectionRefused'],
+    ['Kubernetes Event', 'FailedScheduling ' + marker + ' insufficient cpu', 'Pending, InsufficientCPU'],
+    ['Resource Status', JSON.stringify({ readyReplicas: 2, conditions: [{ message: marker }] }), '{"readyReplicas":2}'],
+    ['Business Probe', 'false', 'false'],
+    [marker, marker, '无已识别信号'],
+  ];
+  for (const [source, detail, expected] of examples) {
+    const e = publicEvidence({ id: 'ev-1', source, summary: marker, detail, at: marker });
+    assert.equal(e.id, 'ev-1');
+    assert.equal(e.detail, expected);
+    assert.ok(!JSON.stringify(e).includes(marker));
+    assert.deepEqual(publicEvidence(e), e);
+  }
 });

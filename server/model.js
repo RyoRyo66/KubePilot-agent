@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { isIP } from 'node:net';
 import { request, modelEndpoint } from './network.js';
 import { ensure, Problem, string, now } from './common.js';
+import { publicEvidence } from './evidence.js';
 const str = { type: 'string' },
   list = { type: 'array', items: str };
 const specs = {
@@ -58,11 +59,8 @@ export class Model {
     if (tool !== 'connection') {
       ensure(Array.isArray(input.evidence), '缺少诊断证据');
       const evidence = input.evidence.slice(0, 32).map((e) => ({
+        ...publicEvidence(e),
         id: string(e.id, 1, 128, '证据编号'),
-        source: String(e.source || '').slice(0, 100),
-        summary: String(e.summary || '').slice(0, 500),
-        detail: String(e.detail || '').slice(-2000),
-        at: e.at,
       }));
       input = { ...input, evidence };
       if (input.knowledge)
