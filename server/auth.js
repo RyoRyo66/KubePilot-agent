@@ -1,4 +1,4 @@
-import { pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { isIP } from 'node:net';
 import { id, digest, ensure, string, Problem } from './common.js';
@@ -67,6 +67,7 @@ export class Accounts {
     this.cookie = secure ? '__Host-kubepilot_session' : 'kubepilot_session';
     this.ipBudget = new Budget(32768);
     this.accountBudget = new Budget(65536);
+    this.challengeKey = randomBytes(32);
     this.slots = 0;
     this.byPeer = new Map();
     this.dummy = {
@@ -75,6 +76,20 @@ export class Accounts {
       salt: randomBytes(24).toString('base64'),
       hash: randomBytes(32).toString('base64'),
     };
+  }
+  checkWork(name, password, proof) {
+    const tag = prefix => createHmac('sha256', this.challengeKey)
+      .update(JSON.stringify([name, password, prefix])).digest('hex');
+    const [expires, nonce, mac] = String(proof?.challenge || '').slice(0, 180).split('.');
+    const prefix = expires + '.' + nonce;
+    if (/^[0-9]{13}$/.test(expires) && Number(expires) >= Date.now() &&
+        mac && /^[a-f0-9]{64}$/.test(mac) && timingSafeEqual(Buffer.from(mac), Buffer.from(tag(prefix))) &&
+        Number.isSafeInteger(proof.answer) && proof.answer >= 0 &&
+        digest(proof.challenge + ':' + proof.answer).startsWith('0000')) return;
+    const next = (Date.now() + 120000) + '.' + id();
+    const error = new Problem('请完成登录验证', 428, 'login_work');
+    error.challenge = next + '.' + tag(next);
+    throw error;
   }
   recordFailedLogin(user) {
     const time = Date.now();
@@ -159,7 +174,7 @@ export class Accounts {
       } else {
         if (action === 'login' && row) {
           const budget = this.db.prepare('SELECT retry_at FROM login_failures WHERE user=?').get(row.id);
-          ensure(!budget || budget.retry_at <= Date.now(), '账号或密码错误', 401);
+          if (budget && budget.retry_at > Date.now()) this.checkWork(name, b.password, b.proof);
         }
         const ok = await matches(
           action === 'login' ? b.password : b.currentPassword,

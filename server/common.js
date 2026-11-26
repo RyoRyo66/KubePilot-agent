@@ -51,10 +51,36 @@ export function origin(raw, insecure = false) {
       !u.search &&
       !u.hash &&
       u.pathname === '/' &&
-      (u.protocol === 'https:' || (insecure && u.protocol === 'http:')),
+      (u.protocol === 'https:' || (insecure && u.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(u.hostname))),
     '请输入完整 HTTPS 地址，本地实验可允许 HTTP',
   );
   return u.origin;
+}
+export const probeFields = ['startupProbe', 'readinessProbe', 'livenessProbe'];
+const handlers = ['httpGet', 'tcpSocket', 'grpc', 'exec'];
+function describeProbes(value) {
+  let probes;
+  try { probes = JSON.parse(value); } catch { probes = {}; }
+  const result = {};
+  for (const name of probeFields) {
+    const probe = probes?.[name];
+    if (!probe || typeof probe !== 'object') continue;
+    const handler = handlers.find(h => Object.hasOwn(probe, h)) ||
+      (handlers.includes(probe.handler) ? probe.handler : 'unknown');
+    const description = { handler };
+    for (const key of ['timeoutSeconds', 'periodSeconds', 'failureThreshold', 'successThreshold', 'initialDelaySeconds'])
+      if (Number.isSafeInteger(probe[key]) && probe[key] >= 0) description[key] = probe[key];
+    result[name] = description;
+  }
+  return JSON.stringify(result);
+}
+// Used on outbound plans and on historical records produced by older releases.
+export function publicPlan(plan) {
+  if (plan?.action !== 'restore_probe') return plan;
+  return { action: plan.action, target: plan.target, baselineId: plan.baselineId,
+    summary: '恢复已批准的探针配置', before: describeProbes(plan.before), after: describeProbes(plan.after),
+    changeId: /^[a-f0-9]{64}$/.test(plan.changeId || '') ? plan.changeId : undefined,
+    checks: ['资源身份与版本', '批准的基线', '服务端预检与业务验证'] };
 }
 export const actions = {
   restore_image: 'ImagePullBackOff',
@@ -122,6 +148,7 @@ export function scopeOf(s) {
       ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password && !u.hash,
       '业务检查地址无效',
     );
+    ensure(u.protocol === 'https:' || probeServiceName(u, ns), '外部业务检查必须使用 HTTPS');
     return { kind, name, probeUrl: u.href };
   });
   return {
@@ -137,7 +164,7 @@ export const inScope = (s, t) =>
 export function json(res, status, value) {
   if (res.destroyed || res.headersSent) return;
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(value));
+  res.end(JSON.stringify(value, (_key, item) => publicPlan(item)));
 }
 export async function body(req, limit = 65536) {
   ensure(req.headers['content-type']?.split(';')[0].trim() === 'application/json', '需要 JSON', 415);
@@ -164,6 +191,12 @@ export function headers(res) {
     'Referrer-Policy': 'no-referrer',
   }))
     res.setHeader(k, v);
+}
+export function checkTransport(req, publicOrigin, trusted = []) {
+  const ip = req.socket.remoteAddress?.replace(/^::ffff:/, '');
+  const loop = ip === '::1' || ip === '127.0.0.1';
+  const tls = req.socket.encrypted || (publicOrigin?.startsWith('https:') && (loop || trusted.includes(ip)) && req.headers['x-forwarded-proto'] === 'https');
+  ensure(publicOrigin?.startsWith('https:') ? tls : loop || tls, '需要 HTTPS 或本机回环连接', 403);
 }
 export function checkWeb(req, publicOrigin) {
   const local = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/i;

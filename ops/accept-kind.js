@@ -6,6 +6,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { connectorImage } from '../server/common.js';
+import { prepare } from './authorize.js';
+import { kubeconfigClient } from '../connector/kubeconfig.js';
+import { hashPlan } from '../server/common.js';
+import { acceptanceTLS } from './accept-tls.js';
 import { monitoring } from './monitoring.js';
 
 const cluster = 'kubepilot-v3-accept',
@@ -39,7 +43,7 @@ const img = process.env.ACCEPT_IMAGE || 'kubepilot-v3:accept',
   port = Number(process.env.ACCEPT_PORT || 18183),
   root = 'http://127.0.0.1:' + port;
 const modelURL = 'http://model-fixture.' + ns + '.svc:18083/v1',
-  source = 'http://platform.' + ns + '.svc:18081';
+  source = 'https://platform.' + ns + '.svc:18443';
 const scope = {
   namespace: ns,
   image: connectorImage(process.env.ACCEPT_CONNECTOR_IMAGE || img),
@@ -139,8 +143,12 @@ const endpoints = () =>
     .items.flatMap((i) => i.endpoints || [])
     .filter((e) => e.conditions?.ready).length;
 console.log('核对独立节点后部署验收组件');
+const {ca, caFile, secret} = acceptanceTLS(output, ns);
 kubectl(['apply', '-f', 'deploy/lab.yaml']);
 apply(svc('model-fixture', 18083));
+apply(secret('platform', ns));
+apply(secret('kubepilot-admission', ns));
+apply(obj('ConfigMap','accept-ca',{data:{'ca.crt':ca}}));
 apply({
   apiVersion: 'v1',
   kind: 'List',
@@ -153,7 +161,7 @@ apply({
     }),
     deployment(
       'platform',
-      ['node', 'server/main.js'],
+      ['node', 'ops/accept-platform.js'],
       {
         PLATFORM_HOST: '0.0.0.0',
         PLATFORM_ALLOW_HTTP: 'true',
@@ -161,12 +169,12 @@ apply({
         PLATFORM_TRUSTED_MODEL_URL: modelURL,
         PLATFORM_TRUSTED_MODEL_IPS: get('service', 'model-fixture').spec.clusterIP,
         PLATFORM_INTERVAL_SECONDS: '3600',
-        PLATFORM_DATA_DIR: '/data',
+        PLATFORM_DATA_DIR: '/data/private',
       },
-      [{ name: 'data', persistentVolumeClaim: { claimName: 'platform-data' } }],
-      [{ name: 'data', mountPath: '/data' }],
+      [{ name: 'data', persistentVolumeClaim: { claimName: 'platform-data' } },{name:'tls',secret:{secretName:'platform-tls',defaultMode:288}}],
+      [{ name: 'data', mountPath: '/data' },{name:'tls',mountPath:'/tls',readOnly:true}],
     ),
-    svc('platform', 18081),
+    obj('Service','platform',{spec:{selector:{app:'platform'},ports:[{name:'browser',port:18081},{name:'tls',port:18443}]}}),
     deployment(
       'model-fixture',
       ['node', '--preserve-symlinks-main', '/fixture/fixture.mjs'],
@@ -238,7 +246,7 @@ try {
   await until('已有工作空间巡检完成', async () => !(await api('/platform/state')).busy);
   const { config: receiver } = await api('/platform/setup/source', {
     publicUrl: source,
-    allowHttp: true,
+    allowHttp: false,
   });
   await api('/platform/setup/model', {
     baseUrl: modelURL,
@@ -246,11 +254,31 @@ try {
     apiKey: '',
   });
   const { manifest } = await api('/platform/setup/connector', scope);
-  apply(JSON.parse(manifest));
+  const bundle=JSON.parse(manifest);
+  const pod=bundle.items.find(o=>o.kind==='Deployment').spec.template.spec;
+  pod.volumes.push({name:'accept-ca',configMap:{name:'accept-ca'}});
+  pod.containers[0].volumeMounts.push({name:'accept-ca',mountPath:'/accept-ca',readOnly:true});
+  pod.containers[0].env.push({name:'NODE_EXTRA_CA_CERTS',value:'/accept-ca/ca.crt'});
+  apply(bundle);
+  const enroll=JSON.parse(bundle.items.find(o=>o.kind==='Secret').stringData['config.json']);
+  const policy=await prepare(enroll,kubeconfigClient(config,'kind-'+cluster,ns,bin));
+  const live=get('service','demo-web');
+  assert.equal(policy.targets['Service/demo-web'].uid,live.metadata.uid);
+  assert.deepEqual(live.spec.selector,{app:'demo-web'});
+  assert.equal(policy.targets['Service/demo-web'].selector,hashPlan({app:'demo-web'}));
+  const policyFile=join(output,'approval.json');
+  writeFileSync(policyFile,JSON.stringify(policy),{mode:0o600});
+  execFileSync(process.execPath,['ops/authorize.js','install',policyFile,config,'kind-'+cluster,hashPlan(policy),caFile],{stdio:'inherit'});
   waitDeployment('kubepilot-connector');
   console.log('等待 Connector 核验健康基线');
   await until('健康基线', async () => (await api('/platform/state')).ready);
-  apply(monitoring(receiver, scope.targets[0].probeUrl, mon));
+  const monitors=monitoring(receiver,scope.targets[0].probeUrl,mon);
+  const am=monitors.items.find(o=>o.kind==='Secret' && o.metadata.name==='alertmanager');
+  const amConfig=JSON.parse(am.stringData['alertmanager.yml']);
+  amConfig.receivers[0].webhook_configs[0].http_config.tls_config={ca_file:'/cfg/ca.crt'};
+  am.stringData['alertmanager.yml']=JSON.stringify(amConfig);
+  am.stringData['ca.crt']=ca;
+  apply(monitors);
   for (const n of ['prometheus', 'blackbox', 'alertmanager']) waitDeployment(n, mon);
   await until('Prometheus 健康业务采样', () => results().some((r) => r.value[1] === '1'));
   await until('初始巡检', async () => {

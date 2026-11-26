@@ -4,13 +4,17 @@ import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { withRuntimeStore } from './database.js';
 import { Demo, runbooks } from './demo.js';
+import { approved, loadApprovals } from '../connector/policy.js';
 import { Kubernetes } from '../connector/kube.js';
 import { kubeconfigClient } from '../connector/kubeconfig.js';
+import { Budget } from './auth.js';
 import { Model } from './model.js';
 import {
   actions,
   body,
   checkWeb,
+  checkTransport,
+  origin,
   ensure,
   hashPlan,
   headers,
@@ -40,8 +44,16 @@ function createLab(
     model = null,
     writes = mode === 'demo',
     publicOrigin = '',
+    approvals = () => loadApprovals(process.env.AGENT_APPROVALS, scope?.namespace, 1),
   } = {},
 ) {
+  if (publicOrigin) publicOrigin = origin(publicOrigin, true);
+  if (token || (publicOrigin && publicOrigin.startsWith('https:')))
+    ensure(typeof token === 'string' && /^[A-Za-z0-9_-]{32,256}$/.test(token) && new Set(token).size >= 12,
+      '实验台需要随机生成的访问令牌，建议使用 32 个随机字节的 base64url 编码');
+  const failedTokens = new Budget(4096);
+  const globalFailures = new Budget(1);
+  const proxies = (process.env.AGENT_TRUSTED_PROXIES || '').split(',').filter(Boolean);
   const owner = 'local-lab';
   db.db.prepare('INSERT OR IGNORE INTO users VALUES (?,?,?)').run(owner, owner, '{}');
   const ws = (db.workspace(owner) || db.createSpace(owner, '本地实验', '')).id;
@@ -61,6 +73,8 @@ function createLab(
     ns = scope.namespace;
     provider ||= new Kubernetes(scope);
   }
+  const trusted = (key, baseline) => mode === 'demo' || approved(approvals()[key], baseline);
+  const baselineFor = key => { const b = get('baseline', key); return trusted(key, b) ? b : null; };
   const policies = () =>
     Object.entries(actions).map(
       ([action, type]) =>
@@ -142,7 +156,7 @@ function createLab(
       const key = t.kind + '/' + t.name;
       try {
         const b = await provider.baseline(t, sig);
-        if (b && (mode === 'demo' || checks.get(key) === b.id) && get('baseline', key)?.id !== b.id)
+        if (b && trusted(key, b) && (mode === 'demo' || checks.get(key) === b.id) && get('baseline', key)?.id !== b.id)
           put('baseline', key, b);
         checks.set(key, b?.id);
       } catch (error) {
@@ -232,7 +246,7 @@ function createLab(
     const key = i.target.kind + '/' + i.target.name;
     i.plan =
       d.disposition === 'consider_plan'
-        ? await provider.plan(i.target, i.type, get('baseline', key), sig)
+        ? await provider.plan(i.target, i.type, baselineFor(key), sig)
         : null;
     delete i.review;
     i.planHash = i.plan ? hashPlan(i.plan) : '';
@@ -286,13 +300,14 @@ function createLab(
     const fresh = await provider.plan(
       i.target,
       i.type,
-      get('baseline', i.target.kind + '/' + i.target.name),
+      baselineFor(i.target.kind + '/' + i.target.name),
       sig,
     );
     ensure(fresh && hashPlan(fresh) === hash, '当前计划已改变', 409);
     sig.throwIfAborted();
     try {
       await provider.apply(fresh, sig, () => {
+        ensure(baselineFor(i.target.kind + '/' + i.target.name)?.id === fresh.baselineId, '基线审批已改变');
         sig.throwIfAborted();
         ensure(Date.parse(i.reviewExpires) > Date.now(), '计划确认已过期', 409);
         i.executionCount++;
@@ -434,7 +449,12 @@ function createLab(
         if (req.method === 'GET' && p === '/api/platform/ping')
           return json(res, 404, { mode: 'standalone' });
         if (p === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true });
-        ensure(!token || same(req.headers.authorization, 'Bearer ' + token), '需要访问令牌', 401);
+        checkTransport(req, publicOrigin, proxies);
+        if (token && !same(req.headers.authorization, 'Bearer ' + token)) {
+          failedTokens.charge(req.socket.remoteAddress || '', 12, 60000);
+          globalFailures.charge('all', 200, 60000);
+          throw new Problem('需要访问令牌', 401);
+        }
         stale();
         if (req.method === 'GET') {
           if (p === '/api/state') return json(res, 200, state());

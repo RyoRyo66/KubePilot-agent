@@ -149,7 +149,10 @@ async function fixture(t) {
   for (let i = 0; i < 2; i++) await worker.sample(scope.targets[0], new AbortController().signal);
   stop = new AbortController();
   loop = worker.run(stop.signal, 5);
-  await until(async () => (await good('/api/platform/state')).ready);
+  await until(async () => {
+    const state = await good('/api/platform/state');
+    return state.ready && state.lastScan && !state.busy;
+  });
   const alert = async (status = 'firing') => {
     const r = await call(
       '/ingest/alertmanager',

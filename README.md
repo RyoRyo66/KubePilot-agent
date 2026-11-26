@@ -23,13 +23,13 @@ npm.cmd start
 以有仓库权限的终端构建、推送镜像。请将示例地址替换为节点能拉取的仓库，私库拉取凭证由集群管理员配置。
 
 ```sh
-docker build --target connector -t registry.example.com/team/kubepilot-connector:0.3.1-r1 .
-docker push registry.example.com/team/kubepilot-connector:0.3.1-r1
+docker build --target connector -t registry.example.com/team/kubepilot-connector:0.3.1-r2 .
+docker push registry.example.com/team/kubepilot-connector:0.3.1-r2
 # 从 push 输出复制完整 digest，与仓库名拼成 repo@sha256:…，填入平台并下载新清单。
 kubectl --context YOUR_TEST_CONTEXT apply -f downloaded-connector.json
 ```
 
-业务检查示例为 `http://demo-web.kube-agent-lab.svc/`。Connector 从相同命名空间的 Service 获取 ClusterIP，核对 DNS 后才发送请求。对另有登记的固定业务站点，管理员可在 Connector 设置 `CONNECTOR_PROBE_ORIGINS`。首次登记需要两次健康基线采样。基线和一次写入记录保存在 Connector 的 PVC。重新登记后需要应用新清单并重新建立基线。
+业务检查示例为 `http://demo-web.kube-agent-lab.svc/`。Connector 从相同命名空间的 Service 获取 ClusterIP，核对 DNS 后才发送请求。对另有登记的固定业务站点，管理员可在 Connector 设置 `CONNECTOR_PROBE_ORIGINS`。首次登记需要集群管理员批准健康基线，并通过两次健康采样。基线和一次写入记录保存在 Connector 的 PVC。重新登记后需要应用新清单并重新建立基线。
 
 ## 从告警到恢复
 
@@ -85,8 +85,40 @@ Connector 每 4 秒独立上报心跳，单次长轮询最多等待 5 秒。新�
 
 ### 0.3.1 修订 1
 
-本修订沿用平台版本 0.3.1、Connector 协议 3 和原数据卷。构建平台与 Connector 时使用独立镜像标签 `0.3.1-r1`。已有执行端需要更新工作空间的镜像地址并应用重新生成的清单，使运行镜像、健康检查和 RBAC 同步更新。
+本修订沿用平台版本 0.3.1、当时的 Connector 协议 3 和原数据卷。构建平台与 Connector 时使用独立镜像标签 `0.3.1-r1`。已有执行端需要更新工作空间的镜像地址并应用重新生成的清单，使运行镜像、健康检查和 RBAC 同步更新。
 
 健康检查默认监听集群 Pod 内的 `127.0.0.1:18086`。需要换端口时修改清单中的 `CONNECTOR_HEALTH_PORT`，存活和就绪探针读取同一环境变量。端口被占用时 Connector 等待重试。Service 探测支持 `<服务>.<命名空间>.svc` 和 `<服务>.<命名空间>.svc.cluster.local`，清单仅为范围内的业务 Service 追加读取权限。
 
 平台在派发执行租约前持久登记一次写入尝试。任务在排队阶段暂停、取消或到期时仍可重新诊断。已领取任务的提交结果未知时保留登记，Connector 停止时为已登记 PATCH 保留原租约期限。
+
+## 0.3.1-r2 安全修订与升级
+
+平台和 Connector 使用协议 4。先备份原数据卷并核对属主，升级平台，重新登记固定摘要的 Connector，随后应用新清单。默认登记只授予具名资源的读取授权。完整探针、HTTP 请求头和执行参数仅供集群执行端本地比较；模型、网页和计划记录使用结构摘要。历史原始记录应按原备份的敏感级别保管。外部平台、Webhook、Connector 和外部业务探针均使用 HTTPS。本机回环可显式允许 HTTP；同命名空间的业务 Service 亦可使用 HTTP。HTTPS 反代需覆盖 X-Forwarded-Proto 为 https，并将代理实际源 IP 配入 PLATFORM_TRUSTED_PROXIES（实验台使用 AGENT_TRUSTED_PROXIES）。不要对公网开放后端 HTTP 端口。
+
+### 批准恢复基线
+
+以下命令运行在有明确 kubeconfig 和 context 的集群管理员终端。准入服务使用 Kubernetes 1.30+ 的 admissionregistration.k8s.io/v1 与 matchConditions。在业务命名空间准备名为 kubepilot-admission-tls 的 TLS Secret，服务端证书 SAN 为 kubepilot-admission.<命名空间>.svc。命令末尾的 ca.crt 为签发该证书的 CA 公共证书。首次安装及更换证书时核对有效期。
+
+1. 保存平台新生成的 Connector JSON 清单并应用。该清单含令牌，应按凭据保管。
+2. 在已知健康的发布版本采样。对照受控发布记录核实资源 UID、镜像、探针和 Service 选择器。prepare 的标准输出仅含审批策略和指纹，标准错误显示供复核的摘要。
+3. 确认后把审核过的完整 SHA-256 填入 install。它先安装独立准入 Webhook，再授予具名资源的写权限。只授权已登记的动作、容器以及批准的字段值。审批记录按摘要保存为不可变 ConfigMap。
+
+~~~sh
+kubectl --kubeconfig ./kubeconfig --context MY_CONTEXT apply -f connector.json
+node ops/authorize.js prepare connector.json ./kubeconfig MY_CONTEXT > approval.json
+node ops/authorize.js install approval.json ./kubeconfig MY_CONTEXT REVIEWED_SHA256 ca.crt
+~~~
+
+发布内容、对象 UID 或已批准的 Pod / ReplicaSet / 事件名称变化后，重新审核并安装。旧样本不会自动提升为恢复基线。权限只覆盖具名对象，Pod 日志和事件随审批清单刷新。对临时授权可撤销该命名空间 kubepilot-approved RoleBinding。独立真实实验台从 AGENT_APPROVALS 读取同格式 JSON，generation 使用 1。生产侧应将准入 TLS Secret、准入 Deployment、审批 ConfigMap 及集群级 Webhook 的管理权限留给集群管理员。
+
+### 存储与认证
+
+Linux 服务数据目录由运行 UID 持有且权限为 0700，数据库、SQLite 辅助文件与密钥为 0600。恢复备份时先停服务、逐个核对普通文件及其属主，排除链接后处理权限。Windows 使用当前用户、SYSTEM 和管理员专用 ACL。新 Connector 在 PVC 的 private 子目录工作；保留原卷，停机核查未完成事件后，把原 connector.db 及同一份备份的 SQLite 辅助文件迁入该私有目录，再启动新版。禁止新旧进程同时操作一卷。
+
+实验台向外提供服务时，使用 HTTPS 反代，并通过下面命令生成 AGENT_API_TOKEN。连续认证失败会触发源地址和全局预算。个人账号出现持续登录失败时，浏览器会自动完成绑定本次登录的短时计算验证，正确凭据可以在冷却期内登录。
+
+~~~sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+~~~
+
+独立 kind 验收还需 OpenSSL 命令行（可用 OPENSSL 指定路径）。验收程序签发仅供该测试环境使用的短期证书，并批准预期测试 Service 的选择器摘要。写入私有验收目录的 TLS 文件按测试凭据保管。

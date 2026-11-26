@@ -22,7 +22,7 @@ export function monitoring(
   const token = lines[8]?.match(/^            credentials: "([A-Za-z0-9_-]{25,128})"$/)?.[1];
   ensure(rawURL && token, '接收配置无效');
   const u = new URL(rawURL);
-  const cfg = { publicUrl: origin(u.origin, true), webhookToken: token };
+  const cfg = { publicUrl: origin(u.origin, true), allowHttp: true, webhookToken: token };
   ensure(webhook(cfg) === normalized, '请使用平台生成的完整接收配置');
   const receivers = [
     {

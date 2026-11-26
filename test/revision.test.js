@@ -10,7 +10,7 @@ import { publicEvidence } from '../server/evidence.js';
 import { Dispatch } from '../server/dispatch.js';
 import { Pipeline } from '../server/pipeline.js';
 import { Store } from '../server/database.js';
-import { hashPlan, probeServiceName } from '../server/common.js';
+import { hashPlan, probeServiceName, digest } from '../server/common.js';
 import { manifest, webhook } from '../server/manifest.js';
 import { monitoring } from '../ops/monitoring.js';
 import { Model, modelKey } from '../server/model.js';
@@ -34,7 +34,7 @@ const scope = {
 };
 const cfg = { generation: 1, scope };
 const hello = {
-  protocol: 3,
+  protocol: 4,
   connection: { id: 'worker', generation: 1, namespace: 'sample', provider: 'demo' },
 };
 function tempDir() {
@@ -63,7 +63,7 @@ test('清单和运行时只识别本命名空间业务 Service，探针端口来
     name: 'app-' + i,
     probeUrl: 'http://' + host,
   }));
-  const items = JSON.parse(manifest({ scope: { ...scope, targets } })).items;
+  const items = JSON.parse(manifest({ publicUrl:'https://platform.example', scope: { ...scope, targets } })).items;
   const serviceRules = items
     .find((x) => x.kind === 'Role')
     .rules.filter((r) => r.resources.includes('services'));
@@ -256,10 +256,10 @@ test('Connector 登记与历史清单只接受不可变镜像', () => {
   for (const ref of ['connector', 'connector:v1', 'connector@sha256:' + digest.toUpperCase(),
     'connector@sha256:' + digest.slice(1), image + '\n', 'other@' + image]) {
     assert.throws(() => connectorImage(ref), /固定摘要/);
-    assert.throws(() => manifest({ scope: { ...scope, image: ref } }), /固定摘要/);
+    assert.throws(() => manifest({ publicUrl:'https://platform.example', scope: { ...scope, image: ref } }), /固定摘要/);
   }
   assert.equal(connectorImage(image), image);
-  const deployment = JSON.parse(manifest({ scope: { ...scope, image } })).items.find(x => x.kind === 'Deployment');
+  const deployment = JSON.parse(manifest({ publicUrl:'https://platform.example', scope: { ...scope, image } })).items.find(x => x.kind === 'Deployment');
   assert.equal(deployment.spec.template.spec.containers[0].image, image);
 });
 
@@ -269,8 +269,8 @@ test('登录失败按账号累计，冷却跨连接和重启，成功登录清�
   t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
   let accounts = new Accounts(store, false, false);
   const pw = 'example-fixture-password';
-  const request = (op, name, password, peer) =>
-    accounts.handle(op, { username: name, password, confirmation: password }, peer,
+  const request = (op, name, password, peer, proof) =>
+    accounts.handle(op, { username: name, password, confirmation: password, proof }, peer,
       { headers: {} }, { setHeader() {} });
   const { account } = await request('register', 'TestUser', pw, 'loop1');
   await request('register', 'Neighbor', pw, 'loop1');
@@ -286,11 +286,18 @@ test('登录失败按账号累计，冷却跨连接和重启，成功登录清�
   accounts = new Accounts(store, false, false);
   // Pin the test clock inside the persisted window even on slow CI.
   t.mock.method(Date, 'now', () => before.last_failure + 1);
-  await assert.rejects(request('login', 'testuser', pw, 'loop3'), /账号或密码错误/);
+  let challenge;
+  await assert.rejects(request('login', 'testuser', pw, 'loop3'), e => {
+    challenge = e.challenge;
+    return e.status === 428;
+  });
   assert.deepEqual(state(), before);
   assert.equal((await request('login', 'neighbor', pw, 'loop3')).authenticated, true);
-  Date.now.mock.mockImplementation(() => before.retry_at + 1);
-  assert.equal((await request('login', 'testuser', pw, 'loop3')).authenticated, true);
+  let answer = 0;
+  while (!digest(challenge + ':' + answer).startsWith('0000')) answer++;
+  const proof = { challenge, answer };
+  await assert.rejects(request('login', 'testuser', 'different', 'loop4', proof), e => e.status === 428);
+  assert.equal((await request('login','testuser',pw,'loop3',proof)).authenticated, true);
   assert.equal(state(), undefined);
 });
 

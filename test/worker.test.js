@@ -27,7 +27,6 @@ const cfg = {
 };
 const base = {
   uid: 'app1',
-  id: 'baseline',
   containers: {
     web: {
       image: 'old:v1',
@@ -36,6 +35,8 @@ const base = {
     },
   },
 };
+base.id = hashPlan(base);
+const approvals = () => ({ 'Deployment/api': { uid: base.uid, baselineId: base.id } });
 function fixture() {
   const obj = {
     metadata: { namespace: 'sample', name: 'api', uid: 'app1', resourceVersion: '5', generation: 1 },
@@ -107,10 +108,10 @@ test('日志、基线和 UID 约束，初始容器异常优先于探针事件', 
     ).type,
     'CrashLoopBackOff',
   );
-  const items = JSON.parse(manifest({ scope: cfg })).items;
+  const items = JSON.parse(manifest({ publicUrl:'https://platform.example', scope: cfg })).items;
   const role = items.find((r) => r.kind === 'Role');
   assert.ok(role.rules.every((r) => !r.verbs.includes('update')));
-  assert.deepEqual(role.rules.find((r) => r.verbs.includes('patch')).resourceNames, ['api']);
+  assert.ok(role.rules.every(r => r.resourceNames.length && r.verbs.join() === 'get'));
 });
 test('执行端重启后仍拒绝同一事件的第二次写入', async (tctx) => {
   const dir = mkdtempSync(join(tmpdir(), 'kp-worker-'));
@@ -121,10 +122,10 @@ test('执行端重启后仍拒绝同一事件的第二次写入', async (tctx) =
       serverUrl: 'http://127.0.0.1',
       allowHttp: true,
       generation: 1,
-      protocol: 3,
+      protocol: 4,
       token: 'A'.repeat(32),
     };
-  let w = new Connector(enroll, dir, k);
+  let w = new Connector(enroll, dir, k, { approvals });
   w.put('Deployment/api', base);
   const plan = await k.plan(t, 'ImagePullBackOff', base);
   const job = {
@@ -143,7 +144,7 @@ test('执行端重启后仍拒绝同一事件的第二次写入', async (tctx) =
   const s = new AbortController().signal;
   assert.equal((await w.handle(job, s)).ok, true);
   w.close();
-  w = new Connector(enroll, dir, k);
+  w = new Connector(enroll, dir, k, { approvals });
   try {
     const second = await w.handle({ ...job, id: 'two' }, s);
     assert.equal(second.ok, false);
@@ -192,7 +193,7 @@ test('初始容器只恢复该容器的基线探针，可移除新加的异常�
     path: '/spec/template/spec/initContainers/0/livenessProbe',
   });
 });
-test('预检失败保留写入机会，基线只在连续两次健康采样后轮换', async (ctx) => {
+test('预检失败保留写入机会，未获审批的变更不能轮换基线', async (ctx) => {
   const dir = mkdtempSync(join(tmpdir(), 'kp-preflight-'));
   const { k } = fixture();
   const worker = new Connector(
@@ -201,11 +202,12 @@ test('预检失败保留写入机会，基线只在连续两次健康采样后�
       serverUrl: 'http://localhost',
       allowHttp: true,
       generation: 1,
-      protocol: 3,
+      protocol: 4,
       token: 'B'.repeat(32),
     },
     dir,
     k,
+    { approvals },
   );
   ctx.after(() => {
     worker.close();
@@ -215,12 +217,12 @@ test('预检失败保留写入机会，基线只在连续两次健康采样后�
   k.baseline = async () => sample;
   const signal = new AbortController().signal;
   for (let i = 0; i < 2; i++) await worker.sample(t, signal);
-  sample = { ...base, id: 'healthy-next' };
-  await worker.sample(t, signal);
+  sample = { ...base, containers: { ...base.containers, another: {} } };
+  delete sample.id;
+  sample.id = hashPlan(sample);
+  for (let i = 0; i < 3; i++) await worker.sample(t, signal);
   assert.equal(worker.get('Deployment/api').id, base.id);
-  await worker.sample(t, signal);
-  assert.equal(worker.get('Deployment/api').id, sample.id);
-  const plan = await k.plan(t, 'ImagePullBackOff', sample);
+  const plan = await k.plan(t, 'ImagePullBackOff', base);
   const job = {
     action: 'execute',
     generation: 1,
@@ -255,11 +257,12 @@ test('终止先阻止预检后的新写入，已登记的 PATCH 使用独立的�
       serverUrl: 'http://localhost',
       allowHttp: true,
       generation: 1,
-      protocol: 3,
+      protocol: 4,
       token: 'C'.repeat(32),
     },
     dir,
     k,
+    { approvals },
   );
   ctx.after(() => {
     worker.close();

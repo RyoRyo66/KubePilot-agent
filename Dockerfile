@@ -12,8 +12,8 @@ COPY package.json ./
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 FROM base AS connector
-COPY connector/main.js connector/kube.js connector/
-COPY server/common.js server/network.js server/evidence.js server/
+COPY connector/main.js connector/kube.js connector/policy.js connector/admission.js connector/
+COPY server/common.js server/network.js server/evidence.js server/storage.js server/
 CMD ["node","connector/main.js"]
 FROM base AS platform
 COPY server/ server/

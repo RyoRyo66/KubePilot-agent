@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { isIP } from 'node:net';
 import https from 'node:https';
 import { readFileSync } from 'node:fs';
-import { actions, ensure, hashPlan, inScope, now, probeServiceName, Problem } from '../server/common.js';
+import { actions, ensure, hashPlan, publicPlan, inScope, now, probeServiceName, Problem } from '../server/common.js';
 import { diagnosticSignals, publicEvidence, statusCounters } from '../server/evidence.js';
 import { request } from '../server/network.js';
 const tokenDir = '/var/run/secrets/kubernetes.io/serviceaccount/';
@@ -51,7 +51,7 @@ export function apiClient(accountDir = tokenDir) {
             try {
               ensure(
                 res.statusCode >= 200 && res.statusCode < 300,
-                'Kubernetes API 返回 ' + res.statusCode,
+                'Kubernetes API 返回 ' + res.statusCode, res.statusCode,
               );
               const value = Buffer.concat(chunks).toString('utf8');
               ok(text ? value.slice(-16384) : JSON.parse(value));
@@ -80,8 +80,10 @@ const evidence = (source, summary, detail) => publicEvidence({
 });
 const problemByAction = Object.fromEntries(Object.entries(actions).map(([a, f]) => [f, a]));
 export class Kubernetes {
-  constructor(cfg, api = apiClient(), probe, extraOrigins = []) {
+  constructor(cfg, api = apiClient(), probe, extraOrigins = [], approvals) {
     this.cfg = cfg;
+    this.approvals = approvals;
+    this.probeChanges = new WeakMap();
     this.api = api;
     this.probe = probe || ((t, s) => this.business(t, s));
     this.extraOrigins = new Set(extraOrigins);
@@ -92,7 +94,7 @@ export class Kubernetes {
       ns = this.cfg.namespace;
     const svc = probeServiceName(u, ns);
     ensure(
-      svc || this.extraOrigins.has(u.origin),
+      svc || (u.protocol === 'https:' && this.extraOrigins.has(u.origin)),
       '业务探测地址需要使用授权命名空间的 Service DNS 或管理员登记的地址',
     );
     let allowedIPs;
@@ -138,6 +140,16 @@ export class Kubernetes {
     } while (more);
     return items;
   }
+  async named(t, collection, signal) {
+    const resource = collection.split('/').at(-1);
+    const names = this.approvals()[t.kind + '/' + t.name]?.reads?.[resource] || [];
+    const entries = [];
+    for (const name of names) {
+      try { entries.push(await this.api(collection + '/' + enc(name), { signal })); }
+      catch (error) { if (error.status !== 404) throw error; }
+    }
+    return entries;
+  }
   async read(t, signal) {
     ensure(inScope(this.cfg, { ...t, namespace: this.cfg.namespace }), '未授权目标');
     const object = await this.api(this.path(t), { signal }),
@@ -155,6 +167,12 @@ export class Kubernetes {
     };
     const ns = '/namespaces/' + enc(m.namespace) + '/';
     if (t.kind === 'Service') {
+      if (this.approvals) {
+        const record = await this.api('/api/v1' + ns + 'endpoints/' + enc(t.name), { signal });
+        ensure(record.metadata?.name === t.name && record.metadata?.namespace === m.namespace, '端点身份不符');
+        const endpoints = (record.subsets || []).flatMap(s => s.addresses || []);
+        return { object, target, pods: [], endpoints, ready: endpoints.length > 0 };
+      }
       const slices = await this.list(
         '/apis/discovery.k8s.io/v1' +
           ns +
@@ -182,9 +200,10 @@ export class Kubernetes {
     }
     ensure(parts.length, 'Deployment 缺少可限定的选择条件');
     const query = '?labelSelector=' + enc(parts.join(','));
+    const evidenceList = path => this.approvals ? this.named(t, path, signal) : this.list(path + query, signal);
     const [rs, pods] = await Promise.all([
-      this.list('/apis/apps/v1' + ns + 'replicasets' + query, signal),
-      this.list('/api/v1' + ns + 'pods' + query, signal),
+      evidenceList('/apis/apps/v1' + ns + 'replicasets'),
+      evidenceList('/api/v1' + ns + 'pods'),
     ]);
     const owners = new Set(rs.filter((r) => owner(r, m.uid)).map((r) => r.metadata.uid));
     const owned = pods.filter(
@@ -212,7 +231,10 @@ export class Kubernetes {
       ...pods.slice(8),
       ...active.slice(1),
     ].slice(0, 10);
-    const values = await Promise.all(
+    const values = this.approvals ? [
+      (await this.named(v.target, '/api/v1/namespaces/' + enc(v.target.namespace) + '/events', signal))
+        .filter(e => refs.some(o => o.metadata.uid === e.involvedObject?.uid)),
+    ] : await Promise.all(
       refs.map((o) =>
         this.list(
           '/api/v1/namespaces/' +
@@ -453,15 +475,18 @@ export class Kubernetes {
       } else return null;
     } else return null;
     if (!after || hashPlan(before) === hashPlan(after)) return null;
-    return {
+    const plan = publicPlan({
       action,
+      ...(action === 'restore_probe' ? { changeId: hashPlan([before, after]) } : {}),
       summary: '恢复已核验的健康配置',
       before: JSON.stringify(before),
       after: JSON.stringify(after),
       baselineId: b.id,
       target: t,
       checks: ['资源 UID 和版本一致', '服务端预检', '工作负载和业务检查'],
-    };
+    });
+    if (action === 'restore_probe') this.probeChanges.set(plan, structuredClone(after));
+    return plan;
   }
   async apply(plan, signal, beforeCommit = () => {}, commitSignal = signal) {
     const t = plan.target,
@@ -471,7 +496,8 @@ export class Kubernetes {
       { op: 'test', path: '/metadata/uid', value: t.uid },
       { op: 'test', path: '/metadata/resourceVersion', value: t.version },
     ];
-    const value = JSON.parse(plan.after);
+    const value = plan.action === 'restore_probe' ? this.probeChanges.get(plan) : JSON.parse(plan.after);
+    ensure(value, '需要执行端现场重新生成探针计划');
     if (plan.action === 'restore_selector') patch.push({ op: 'add', path: '/spec/selector', value });
     else {
       const spec = obj.spec.template.spec;

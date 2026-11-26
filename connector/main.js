@@ -1,15 +1,16 @@
 import http from 'node:http';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { privateRoot, sqlite, sqliteFiles } from '../server/storage.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ensure, hashPlan, id, inScope, origin, scopeOf, Problem } from '../server/common.js';
+import { approved, loadApprovals } from './policy.js';
 import { Kubernetes } from './kube.js';
 export class Connector {
   constructor(enroll, dir, provider, options = {}) {
     ensure(
-      enroll.protocol === 3 &&
+      enroll.protocol === 4 &&
         typeof enroll.token === 'string' &&
         enroll.token.length >= 25 &&
         Number.isSafeInteger(enroll.generation) &&
@@ -19,6 +20,8 @@ export class Connector {
     this.scope = scopeOf(enroll.scope);
     this.cfg = enroll;
     this.root = origin(enroll.serverUrl, enroll.allowHttp === true);
+    this.approvals = options.approvals || (() => loadApprovals(process.env.CONNECTOR_APPROVALS,
+      this.scope.namespace, enroll.generation));
     this.provider =
       provider ||
       new Kubernetes(
@@ -26,11 +29,12 @@ export class Connector {
         undefined,
         undefined,
         (process.env.CONNECTOR_PROBE_ORIGINS || '').split(',').filter(Boolean),
+        this.approvals,
       );
     this.kind = options.kind || 'kubernetes';
     this.delay = options.verifyDelay ?? 1500;
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    this.db = new DatabaseSync(resolve(dir, 'connector.db'));
+    privateRoot(dir, sqliteFiles('connector.db'));
+    this.db = sqlite(dir, 'connector.db');
     this.db.exec(
       'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS attempts(binding TEXT, incident TEXT, PRIMARY KEY(binding,incident));',
     );
@@ -64,17 +68,20 @@ export class Connector {
       .prepare('INSERT INTO kv VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v')
       .run(this.binding + '/' + k, JSON.stringify(v));
   }
+  trusted(t, baseline) {
+    return this.kind === 'demo' ? !!baseline : approved(this.approvals()[t.kind + '/' + t.name], baseline);
+  }
   async sample(t, signal) {
     const key = t.kind + '/' + t.name;
     const saved = this.get(key);
     try {
       const b = await this.provider.baseline(t, signal);
-      if (b && b.id === this.samples.get(key) && saved?.id !== b.id) this.put(key, b);
+      if (this.trusted(t, b) && b.id === this.samples.get(key) && saved?.id !== b.id) this.put(key, b);
       this.samples.set(key, b?.id);
-      this.health[key] = saved || (b && this.get(key)) ? 'ready' : 'pending';
+      this.health[key] = this.trusted(t, this.get(key)) ? 'ready' : 'pending';
     } catch {
       this.samples.delete(key);
-      this.health[key] = saved ? 'ready' : 'unavailable';
+      this.health[key] = 'unavailable';
     }
   }
   attemptExpiry(caseId) {
@@ -126,7 +133,7 @@ export class Connector {
       }
       ensure(['plan', 'execute'].includes(job.action), '未知任务');
       const baseline = this.get(target.kind + '/' + target.name);
-      const fresh = await this.provider.plan(target, job.type, baseline, signal);
+      const fresh = this.trusted(target, baseline) ? await this.provider.plan(target, job.type, baseline, signal) : null;
       if (job.action === 'plan') return { ...response, ok: true, plan: fresh };
       ensure(
         typeof job.caseId === 'string' &&
@@ -143,6 +150,7 @@ export class Connector {
       const exists = this.db.prepare('SELECT 1 FROM attempts WHERE binding=? AND incident=?');
       ensure(!exists.get(this.binding, job.caseId), '该事件已有写入记录');
       const record = () => {
+        ensure(this.trusted(target, baseline), '基线审批已改变');
         signal.throwIfAborted();
         ensure(Date.now() < Date.parse(job.expiresAt), '任务租约已过期');
         if (expires) ensure(Date.now() < expires, '事件写入窗口已过期');
@@ -200,6 +208,10 @@ export class Connector {
   async deliver(signal) {
     const out = this.get('outbox');
     if (!out) return;
+    if (out.result?.plan?.action === 'restore_probe' && !out.result.plan.changeId) {
+      this.put('outbox', null);
+      return;
+    }
     if (Date.parse(out.expiresAt) > Date.now()) {
       try {
         await this.post('result', out.result, signal);
@@ -222,7 +234,7 @@ export class Connector {
     await this.deliver(stop);
     const { job } = await this.post(
       'poll',
-      { protocol: 3, heartbeat: true, wait: true, connection: this.registration() },
+      { protocol: 4, heartbeat: true, wait: true, connection: this.registration() },
       stop,
     );
     if (job) {
@@ -248,7 +260,7 @@ export class Connector {
         try {
           await this.post(
             'heartbeat',
-            { protocol: 3, heartbeat: true, connection: this.registration() },
+            { protocol: 4, heartbeat: true, connection: this.registration() },
             stop,
           );
         } catch {

@@ -1,13 +1,11 @@
-import { DatabaseSync } from 'node:sqlite';
+import { privateRoot, sqlite, sqliteFiles, storageKey } from './storage.js';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { id, now, ensure, digest } from './common.js';
 
 // The lock lives in a separate SQLite file so ordinary data transactions remain short.
 export function withRuntimeStore(dir, initialize) {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const lock = new DatabaseSync(join(dir, 'process-lock.db'));
+  privateRoot(dir, [...sqliteFiles('process-lock.db'), ...sqliteFiles('kubepilot.db'), 'storage.key']);
+  const lock = sqlite(dir, 'process-lock.db');
   try {
     lock.exec('BEGIN EXCLUSIVE');
   } catch (error) {
@@ -44,16 +42,9 @@ export function withRuntimeStore(dir, initialize) {
 }
 export class Store {
   constructor(dir) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const path = join(dir, 'kubepilot.db'),
-      keyfile = join(dir, 'storage.key');
-    if (!existsSync(keyfile)) {
-      ensure(!existsSync(path), '数据密钥缺失，需要恢复备份');
-      writeFileSync(keyfile, randomBytes(32), { mode: 0o600, flag: 'wx' });
-    }
-    this.key = readFileSync(keyfile);
-    ensure(this.key.length === 32, '数据密钥损坏');
-    this.db = new DatabaseSync(path);
+    privateRoot(dir, [...sqliteFiles('kubepilot.db'), 'storage.key']);
+    this.key = storageKey(dir);
+    this.db = sqlite(dir, 'kubepilot.db');
     this.db.exec(`
       PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=4000;
       CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, password TEXT NOT NULL);

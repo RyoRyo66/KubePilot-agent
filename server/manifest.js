@@ -1,6 +1,7 @@
-import { connectorImage, probeServiceName } from './common.js';
+import { connectorImage, origin, probeServiceName } from './common.js';
 
 export function webhook(c) {
+  origin(c.publicUrl, c.allowHttp);
   return [
     'receivers:',
     '  - name: kubepilot',
@@ -15,6 +16,7 @@ export function webhook(c) {
 }
 export function manifest(c) {
   connectorImage(c.scope.image);
+  origin(c.publicUrl, c.allowHttp);
   const probe = (path) => ({
     exec: {
       command: [
@@ -34,31 +36,11 @@ export function manifest(c) {
     ns = s.namespace,
     metadata = { name: n, namespace: ns };
   const obj = (apiVersion, kind, spec) => ({ apiVersion, kind, metadata, ...spec });
-  const rules = [
-    { apiGroups: [''], resources: ['pods', 'events'], verbs: ['list'] },
-    { apiGroups: [''], resources: ['pods/log'], verbs: ['get'] },
-    { apiGroups: ['apps'], resources: ['replicasets'], verbs: ['list'] },
-    { apiGroups: ['discovery.k8s.io'], resources: ['endpointslices'], verbs: ['list'] },
-  ];
-  for (const [kind, group, resource] of [
-    ['Deployment', 'apps', 'deployments'],
-    ['Service', '', 'services'],
-  ]) {
-    const names = s.targets.filter((t) => t.kind === kind).map((t) => t.name);
-    if (names.length)
-      rules.push({
-        apiGroups: [group],
-        resources: [resource],
-        resourceNames: names,
-        verbs: [
-          'get',
-          ...(s.actions.some((a) =>
-            kind === 'Service' ? a === 'restore_selector' : a !== 'restore_selector',
-          )
-            ? ['patch']
-            : []),
-        ],
-      });
+  const rules = [];
+  for (const [kind, group, resource] of [['Deployment','apps','deployments'], ['Service','','services']]) {
+    const names = s.targets.filter(t => t.kind === kind).map(t => t.name);
+    if (names.length) rules.push({ apiGroups: [group], resources: kind === 'Service' ? [resource,'endpoints'] : [resource],
+      verbs: ['get'], resourceNames: names });
   }
   const probeServices = s.targets.map((t) => probeServiceName(t.probeUrl, ns)).filter(Boolean);
   if (probeServices.length)
@@ -70,7 +52,7 @@ export function manifest(c) {
     });
   const labels = { app: n },
     cfg = {
-      protocol: 3,
+      protocol: 4,
       serverUrl: c.publicUrl,
       allowHttp: c.allowHttp,
       token: c.connectorToken,
@@ -118,7 +100,8 @@ export function manifest(c) {
                     livenessProbe: probe('live'),
                     env: [
                       { name: 'CONNECTOR_CONFIG', value: '/config/config.json' },
-                      { name: 'CONNECTOR_DATA', value: '/data' },
+                      { name: 'CONNECTOR_DATA', value: '/data/private' },
+                      { name: 'CONNECTOR_APPROVALS', value: '/approvals/policy.json' },
                       { name: 'CONNECTOR_HEALTH_PORT', value: '18086' },
                     ],
                     securityContext: {
@@ -132,11 +115,13 @@ export function manifest(c) {
                     },
                     volumeMounts: [
                       { name: 'config', mountPath: '/config', readOnly: true },
+                      { name: 'approvals', mountPath: '/approvals', readOnly: true },
                       { name: 'data', mountPath: '/data' },
                     ],
                   },
                 ],
                 volumes: [
+                  { name: 'approvals', configMap: { name: 'kubepilot-approvals', optional: true } },
                   { name: 'config', secret: { secretName: n, defaultMode: 288 } },
                   { name: 'data', persistentVolumeClaim: { claimName: n } },
                 ],

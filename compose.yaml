@@ -8,7 +8,8 @@ services:
     environment:
       AGENT_MODE: demo
       AGENT_HOST: 0.0.0.0
-      AGENT_PUBLIC_ORIGIN: http://127.0.0.1:18080
+      AGENT_PUBLIC_ORIGIN: ${AGENT_PUBLIC_ORIGIN:?填写实验台的 HTTPS 访问地址}
+      AGENT_TRUSTED_PROXIES: ${AGENT_TRUSTED_PROXIES:-}
       AGENT_API_TOKEN: ${AGENT_API_TOKEN:?需要本地实验台访问令牌}
     volumes: ["lab-v3:/app/data"]
     read_only: true

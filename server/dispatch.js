@@ -18,7 +18,7 @@ export class Dispatch {
   touch(ws, c, b) {
     const v = b.connection;
     ensure(
-      b.protocol === 3 &&
+      b.protocol === 4 &&
         v?.generation === c.generation &&
         c.generation > 0 &&
         v.namespace === c.scope.namespace &&

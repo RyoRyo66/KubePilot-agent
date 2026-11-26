@@ -11,6 +11,7 @@ import { manifest, webhook } from './manifest.js';
 import {
   body,
   checkWeb,
+  checkTransport,
   connectorImage,
   ensure,
   headers,
@@ -76,6 +77,7 @@ function createPlatform(db, options) {
         const url = new URL(req.url, 'http://localhost'),
           p = url.pathname,
           method = req.method;
+        if (!(method === 'GET' && p === '/api/platform/ping')) checkTransport(req, publicOrigin, trustedProxy);
         if (p.startsWith('/connector/') || p === '/ingest/alertmanager') {
           ensure(method === 'POST', '请求方法错误', 405);
           const kind = p === '/ingest/alertmanager' ? 'webhook' : 'connector';
@@ -182,13 +184,21 @@ function createPlatform(db, options) {
             idle();
             const next = origin(b.publicUrl, b.allowHttp === true);
             ensure(
-              !cfg.generation || next === cfg.publicUrl,
+              !cfg.generation || next === cfg.publicUrl || (cfg.publicUrl.startsWith('http:') && next.startsWith('https:')),
               '已部署的 Connector 需要沿用登记地址',
               409,
             );
-            cfg.publicUrl = next;
-            cfg.allowHttp = b.allowHttp === true;
-            db.config(key, cfg);
+            db.tx(() => {
+              if (cfg.generation && next !== cfg.publicUrl) {
+                cfg.generation++;
+                db.rotate(key, cfg, 'connector');
+                db.rotate(key, cfg, 'webhook');
+                invalidate();
+              }
+              cfg.publicUrl = next;
+              cfg.allowHttp = b.allowHttp === true;
+              db.config(key, cfg);
+            });
             reply = { config: webhook(cfg) };
             break;
           }
@@ -235,6 +245,7 @@ function createPlatform(db, options) {
           case '/api/platform/setup/connector':
             idle();
             ensure(cfg.publicUrl, '请先配置接收地址');
+            origin(cfg.publicUrl, cfg.allowHttp);
             connectorImage(b.image);
             cfg.scope = scopeOf(b);
             cfg.generation++;
@@ -279,6 +290,7 @@ function createPlatform(db, options) {
         json(res, e.status || 500, {
           error: e instanceof Problem ? e.message : '服务处理失败',
           code: e instanceof Problem ? e.code : undefined,
+          challenge: e.code === 'login_work' ? e.challenge : undefined,
         });
       }
     },

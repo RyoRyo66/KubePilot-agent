@@ -165,7 +165,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
          <form @submit.prevent="saveSource">
           <label>平台对集群可达的地址<input v-model="source.publicUrl" type="url" required placeholder="https://kubepilot.example.com"/></label>
           <p class="p-field-note">填写平台的域名或服务器 IP。集群中的 localhost 指向容器自身，不能使用它连接你的电脑。</p>
-          <label class="p-check"><input v-model="source.allowHttp" type="checkbox"/><span>本地实验允许 HTTP<small>通过网络使用时，建议由管理员配置 HTTPS。</small></span></label>
+          <label class="p-check"><input v-model="source.allowHttp" type="checkbox"/><span>仅本机回环地址允许 HTTP<small>通过网络使用时，建议由管理员配置 HTTPS。</small></span></label>
           <div class="p-form-actions"><button class="p-button primary" :disabled="!!busy"><Loader2 v-if="busy==='source'" class="spin" :size="16"/>生成接收配置<ArrowRight :size="16"/></button><button v-if="data?.config.publicUrl" class="p-button ghost" type="button" @click="revealSource" :disabled="!!busy">查看已保存配置</button></div>
          </form>
          <div v-if="sourceConfig" class="p-config"><div><strong>Alertmanager receiver</strong><button class="p-icon" aria-label="复制告警接入配置" @click="copy(sourceConfig)"><Copy :size="15"/></button></div><pre tabindex="0">{{sourceConfig}}</pre><p>加入现有配置，将目标告警路由到 kubepilot，然后重新加载 Alertmanager。专用令牌仅允许发送告警。</p></div>
@@ -199,7 +199,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
            <label>业务健康检查地址<input v-model="target.probeUrl" required type="url" :aria-label="`资源 ${index+1} 健康检查地址`" placeholder="http://checkout-api.kube-agent-lab.svc/health"/></label>
            <button class="p-icon p-target-remove" type="button" :aria-label="`移除资源 ${index+1}`" :title="scope.targets.length===1?'至少保留一个授权资源':'移除这项授权资源'" :disabled="scope.targets.length===1" @click="scope.targets.splice(index,1)"><X :size="16"/></button>
           </div>
-          <div class="p-label-row"><strong>允许的恢复动作</strong><span class="p-muted">仅恢复可信健康配置</span></div>
+          <div class="p-label-row"><strong>允许的恢复动作</strong><span class="p-muted">仅恢复管理员已批准的基线</span></div>
           <div class="p-action-checks"><label v-for="a in actions" :key="a.id" class="p-check"><input v-model="scope.actions" type="checkbox" :value="a.id"/><span>{{a.label}}</span></label></div>
           <label class="p-check p-auto-consent"><input v-model="scope.automatic" type="checkbox"/><span><strong>允许在上述范围内自动修复</strong><small>规则与自动复核均通过后执行；每个事件最多尝试一次写操作。</small></span></label>
           <button class="p-button primary" :disabled="!!busy || !data?.config.publicUrl || !scope.actions.length"><Loader2 v-if="busy==='connector'" class="spin" :size="16"/>生成授权与部署清单<ArrowRight :size="16"/></button>
@@ -207,7 +207,7 @@ onUnmounted(()=>{document.body.classList.remove('platform-mode');disposed=true;c
          </form>
          <div v-if="manifest || data?.config.generation" class="p-deploy"><div class="p-label-row"><strong>部署执行端</strong><button v-if="!manifest" class="p-text-button" @click="revealManifest" :disabled="!!busy">读取已生成清单</button><button v-else class="p-text-button" @click="download(manifest,'kubepilot-connector.yaml')"><Download :size="15"/>下载 YAML</button></div><div class="p-command"><Terminal :size="16"/><code>kubectl apply -f kubepilot-connector.yaml</code><button class="p-icon" aria-label="复制安装命令" @click="copy('kubectl apply -f kubepilot-connector.yaml')"><Copy :size="15"/></button></div><p>Connector 自动连接平台，在应用健康且业务探测通过时记录初始基线。已有故障不会被当作健康基线。</p></div>
          <div class="p-arrival"><span class="p-status-dot" :class="{good:data?.online}"/><div><strong>{{data?.online?'执行端已连接':'等待 Connector 上线'}}</strong><p>{{data?.online?`${data.baselineReady} / ${data.config.scope.targets.length} 个资源已建立健康基线`:'需要集群能访问平台地址，并能为 Connector 分配持久化存储。'}}</p></div></div>
-         <div v-if="data?.online" class="p-baselines"><div v-for="(value,key) in data.connection.baselines" :key="key"><span>{{key}}</span><small :class="{'good-text':value==='ready'}">{{value==='ready'?'健康基线已就绪':value}}</small></div></div>
+         <div v-if="data?.online" class="p-baselines"><div v-for="(value,key) in data.connection.baselines" :key="key"><span>{{key}}</span><small :class="{'good-text':value==='ready'}">{{value==='ready'?'已批准的健康基线就绪':value==='pending'?'等待健康采样或管理员批准':value}}</small></div></div>
          <div class="p-bottom-action"><button class="p-button" :disabled="!!busy" @click="enterCases">{{data?.ready&&!session.workspace.onboardingComplete?'完成接入并进入故障中心':'前往故障中心'}}<ArrowRight :size="16"/></button></div>
         </template>
         </div>

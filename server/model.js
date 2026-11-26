@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isIP } from 'node:net';
 import { request, modelEndpoint } from './network.js';
-import { ensure, Problem, string, now } from './common.js';
+import { ensure, Problem, string, now, publicPlan } from './common.js';
 import { publicEvidence } from './evidence.js';
 const str = { type: 'string' },
   list = { type: 'array', items: str };
@@ -63,6 +63,7 @@ export class Model {
         id: string(e.id, 1, 128, '证据编号'),
       }));
       input = { ...input, evidence };
+      if (input.plan) input.plan = publicPlan(input.plan);
       if (input.knowledge)
         input.knowledge = input.knowledge
           .slice(0, 5)

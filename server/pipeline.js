@@ -1,4 +1,4 @@
-import { actions, digest, ensure, hashPlan, id, inScope, now, Problem, stable } from './common.js';
+import { actions, digest, publicPlan, ensure, hashPlan, id, inScope, now, Problem, stable } from './common.js';
 import { publicEvidence } from './evidence.js';
 import { Model } from './model.js';
 import { search } from './knowledge.js';
@@ -271,7 +271,8 @@ export class Pipeline {
       this.step(ws, c, 'manual', '证据不足，转人工核查', assessment.conclusion);
       return;
     }
-    const { plan } = await this.bus.call(ws, cfg, 'plan', { target: i.target, type: i.type }, signal);
+    const reply = await this.bus.call(ws, cfg, 'plan', { target: i.target, type: i.type }, signal);
+    const plan = publicPlan(reply.plan);
     if (!plan) {
       this.step(ws, c, 'manual', '没有适用的健康基线恢复动作');
       return;
@@ -331,7 +332,8 @@ export class Pipeline {
   async execute(ws, c, hash, automatic, signal) {
     const cfg = this.gate(ws, c, hash, automatic),
       i = c.incident;
-    const { plan } = await this.bus.call(ws, cfg, 'plan', { target: i.target, type: i.type }, signal);
+    const reply = await this.bus.call(ws, cfg, 'plan', { target: i.target, type: i.type }, signal);
+    const plan = publicPlan(reply.plan);
     ensure(plan && hashPlan(plan) === hash, '现场已改变，原计划失效', 409);
     this.gate(ws, c, hash, automatic);
     const r = await this.bus.call(

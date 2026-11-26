@@ -22,7 +22,7 @@ test('长轮询立即派工，结果验证后续期，独立心跳不领取任�
   const bus = new Dispatch(),
     cfg = { generation: 1, scope: { namespace: 'sample', targets: [], automatic: true } };
   const hello = {
-    protocol: 3,
+    protocol: 4,
     heartbeat: true,
     wait: true,
     connection: { generation: 1, namespace: 'sample', id: 'worker', provider: 'demo' },
